@@ -1,11 +1,15 @@
 {
   "name": "ai-radar",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "AI RADAR - a daily aggregator of AI research, products, funding and policy news from leading sources.",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "build:news": "node scripts/build-news.js"
   },
   "keywords": ["ai", "news", "rss", "aggregator"],
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "fast-xml-parser": "^4.5.0"
+  }
 }

@@ -421,7 +421,13 @@
     const { today, total } = AIRadar.statsFor(state.items);
     els.statToday.textContent = today;
     els.statSources.textContent = state.sourcesActiveCount || AI_SOURCES.length;
-    els.statUpdated.textContent = state.fromCache ? "cached" : "live";
+    const mode =
+      state.mode === "snapshot"
+        ? "snapshot"
+        : state.mode === "cache" || state.fromCache
+        ? "cached"
+        : "live";
+    els.statUpdated.textContent = mode;
   }
 
   function setLoading(on) {
@@ -484,15 +490,16 @@
     try {
       const result = await AIRadar.aggregate({ force: force || state.refresh });
       state.refresh = false;
+      state.mode = result.mode || (result.fromCache ? "cache" : "live");
+      state.fetchedAt = result.fetchedAt || Date.now();
       const items = result.items;
       if (!items.length) {
         // Fall back to embedded sample so the site is never empty.
         state.items = SAMPLE_ITEMS;
-        state.fromCache = true;
+        state.mode = "sample";
         showError("Live feeds are unreachable right now – showing sample content.");
       } else {
         state.items = items;
-        state.fromCache = result.fromCache;
         showError("");
       }
       state.sourcesActiveCount = new Set(state.items.map((i) => i.sourceId)).size;
@@ -502,9 +509,12 @@
       renderSourceBar();
       renderAll();
       renderStats();
-      els.footerStatus.textContent = state.fromCache
+      const updatedInfo = state.mode === "snapshot"
+        ? "Automatic snapshot generated " + timeAgo(new Date(state.fetchedAt)) + " from " + AI_SOURCES.length + " sources."
+        : state.mode === "cache"
         ? "Showing cached snapshot — pull to refresh for the latest."
         : "Fetched live from " + AI_SOURCES.length + " sources.";
+      els.footerStatus.textContent = updatedInfo;
     } catch (e) {
       showError("Could not load news. Click here to try again.");
     } finally {

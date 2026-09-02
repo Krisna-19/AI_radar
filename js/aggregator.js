@@ -1,9 +1,14 @@
 /*
  * AI RADAR - Aggregator
  * Fetches RSS feeds, parses to items, dedupes, categorises and caches.
+ * Pure helpers (extractText, categorize, …) live in shared.js so the same
+ * logic is used by the browser and the Node snapshot builder.
  */
 (function () {
   "use strict";
+
+  const Core = window.AIRadarCore;
+  const { extractText, extractFirstImage, parseDate, categorize, computeScore, dedupe } = Core;
 
   /* ---------------- Fetch helpers ---------------- */
 
@@ -40,28 +45,6 @@
   }
 
   /* ---------------- Parsing helpers ---------------- */
-
-  function extractText(html) {
-    if (!html) return "";
-    return html
-      .replace(/<\s*script[\s\S]*?<\s*\/\s*script\s*>/gi, " ")
-      .replace(/<\s*style[\s\S]*?<\s*\/\s*style\s*>/gi, " ")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/&nbsp;/gi, " ")
-      .replace(/&amp;/gi, "&")
-      .replace(/&lt;/gi, "<")
-      .replace(/&gt;/gi, ">")
-      .replace(/&quot;/gi, '"')
-      .replace(/&#0?39;/gi, "'")
-      .replace(/\s+/g, " ")
-      .trim();
-  }
-
-  function extractFirstImage(html) {
-    if (!html) return null;
-    const m = html.match(/<img[^>]+src=["']([^"']+)["']/i);
-    return m ? m[1] : null;
-  }
 
   /* Parse an RSS/Atom XML string into generic items. */
   function parseXmlFeed(xmlText) {
@@ -115,7 +98,6 @@
 
   /* Parse rss2json JSON response into the same item shape. */
   function parseRss2Json(html) {
-    // rss2json returns JSON; when re-encoded by allorigins it may come back as text.
     let data;
     try {
       data = JSON.parse(html);
@@ -130,8 +112,7 @@
         pubDate: it.pubDate || "",
         description: extractText(it.description || ""),
         image: (function () {
-          const m = it.thumbnail || "";
-          if (m) return m;
+          if (it.thumbnail) return it.thumbnail;
           const body = it.description || "";
           const img = body.match(/<img[^>]+src=["']([^"']+)["']/i);
           return img ? img[1] : null;
@@ -140,105 +121,34 @@
       .filter((it) => it.title && it.link);
   }
 
-  /* ---------------- Normalisation & categorising ---------------- */
+  /* ---------------- Enrichment ---------------- */
 
-  function normalizeTitle(t) {
-    return (t || "")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+  function enrich(rawItems, source) {
+    return rawItems.map((it, i) => {
+      const date = parseDate(it.pubDate);
+      return {
+        id: source.id + "-" + i,
+        sourceId: source.id,
+        sourceName: source.name,
+        sourceType: source.type,
+        sourceColor: source.color,
+        sourceWeight: source.weight,
+        title: it.title || "Untitled",
+        link: it.link || "#",
+        date: date ? date.toISOString() : "",
+        description: it.description || "",
+        image: it.image || null,
+        category: categorize(it.title + " " + it.description),
+        score: computeScore(source.weight, date, i),
+      };
+    });
   }
 
-  function categorize(item) {
-    const hay = (item.title + " " + item.description).toLowerCase();
-    const has = (words) =>
-      words.some((w) => hay.includes(w));
-
-    if (
-      has([
-        "arxiv",
-        "paper",
-        "research",
-        "study",
-        "benchmark",
-        "model card",
-        "preprint",
-        "nature",
-      ])
-    )
-      return "research";
-    if (
-      has([
-        "raise",
-        "raises",
-        "funding",
-        "funded",
-        "valuation",
-        "acqui",
-        "investment",
-        "million",
-        "billion",
-        "ipo",
-        "series a",
-        "series b",
-        "series c",
-        "startup",
-      ])
-    )
-      return "funding";
-    if (
-      has([
-        "safety",
-        "regulation",
-        "regulatory",
-        "policy",
-        "government",
-        "law",
-        "lawmaker",
-        "ai act",
-        "legislat",
-        "ban",
-        "transparency",
-        "ethics",
-      ])
-    )
-      return "policy";
-    if (
-      has([
-        "launch",
-        "release",
-        "releases",
-        "announce",
-        "introduces",
-        "unveils",
-        "rollout",
-        "upgrade",
-        "chatgpt",
-        "gpt-",
-        "claude",
-        "gemini",
-        "llama",
-        "microsoft",
-        "google",
-        "openai",
-        "anthropic",
-        "tool",
-        "app",
-      ])
-    )
-      return "product";
-    return "news";
-  }
-
-  function parseDate(str) {
-    if (!str) return null;
-    try {
-      const d = new Date(str);
-      return isNaN(d.getTime()) ? null : d;
-    } catch (e) {
-      return null;
-    }
+  function restoreDates(items) {
+    return items.map((it) => ({
+      ...it,
+      date: it.date ? new Date(it.date) : null,
+    }));
   }
 
   /* ---------------- Dispatcher: fetch + parse ---------------- */
@@ -253,25 +163,7 @@
       } catch (e) {
         items = parseXmlFeed(raw);
       }
-      return items.map((it, i) => {
-        const date = parseDate(it.pubDate);
-        return {
-          id: source.id + "-" + i,
-          sourceId: source.id,
-          sourceName: source.name,
-          sourceType: source.type,
-          sourceColor: source.color,
-          sourceWeight: source.weight,
-          title: it.title || "Untitled",
-          link: it.link || "#",
-          date,
-          dateLabel: date ? date.toISOString() : "",
-          description: it.description || "",
-          image: it.image || null,
-          category: categorize(it),
-          score: computeScore(source, date, i),
-        };
-      });
+      return enrich(items, source);
     } catch (e) {
       console.warn("Failed to load source " + source.name, e);
       return [];
@@ -300,15 +192,23 @@
     return items;
   }
 
-  function computeScore(source, date, index) {
-    let recency = 0;
-    if (date) {
-      const hours = Math.max(0, (Date.now() - date.getTime()) / 3600000);
-      recency = Math.exp(-hours / 30); // decay over ~30h
-    } else {
-      recency = Math.max(0, 0.2 - index * 0.02);
+  /* ---------------- Snapshot (pre-aggregated by scripts/build-news.js) ---------------- */
+
+  async function trySnapshot() {
+    try {
+      const raw = await fetchWithTimeout(SNAPSHOT_PATH, 6000);
+      const data = JSON.parse(raw);
+      if (data && Array.isArray(data.items) && data.items.length) {
+        return {
+          items: restoreDates(data.items),
+          fetchedAt: data.generatedAt || Date.now(),
+          mode: "snapshot",
+        };
+      }
+    } catch (e) {
+      /* snapshot not available - fall through to live aggregation */
     }
-    return recency * source.weight;
+    return null;
   }
 
   /* ---------------- Cache ---------------- */
@@ -317,8 +217,7 @@
     try {
       const raw = localStorage.getItem(CACHE_KEY);
       if (!raw) return null;
-      const data = JSON.parse(raw);
-      return data;
+      return JSON.parse(raw);
     } catch (e) {
       return null;
     }
@@ -326,10 +225,7 @@
 
   function writeCache(items) {
     try {
-      localStorage.setItem(
-        CACHE_KEY,
-        JSON.stringify({ fetchedAt: Date.now(), items })
-      );
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ fetchedAt: Date.now(), items }));
     } catch (e) {
       /* ignore quota errors */
     }
@@ -338,41 +234,32 @@
   /* ---------------- Public API ---------------- */
 
   async function aggregate({ force = false } = {}) {
+    // 1) Use the committed snapshot when present - fast and reliable.
+    const snap = await trySnapshot();
+    if (snap) return snap;
+
+    // 2) Fall back to live aggregation with a short cache window.
     const cache = readCache();
     if (!force && cache && Date.now() - cache.fetchedAt < CACHE_TTL_MS) {
-      return { items: cache.items, fromCache: true, fetchedAt: cache.fetchedAt };
+      const items = restoreDates(cache.items);
+      return { items, fromCache: true, fetchedAt: cache.fetchedAt, mode: "cache" };
     }
 
+    return aggregateLive(force);
+  }
+
+  async function aggregateLive(force) {
     const perSource = await mapLimit(AI_SOURCES, 3, loadSourceWithRetry);
     const merged = dedupe(perSource.flat());
-    merged.sort((a, b) =>
-      (b.score || 0) - (a.score || 0) ||
-      (b.date ? b.date.getTime() : 0) - (a.date ? a.date.getTime() : 0)
+    merged.sort(
+      (a, b) =>
+        (b.score || 0) - (a.score || 0) ||
+        (b.date ? +b.date : 0) - (a.date ? +a.date : 0)
     );
 
-    writeCache(merged);
-    return { items: merged, fromCache: false, fetchedAt: Date.now() };
-  }
-
-  function dedupe(items) {
-    const seen = new Set();
-    const out = [];
-    for (const it of items) {
-      const key = normalizeTitle(it.title);
-      if (!key) continue;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(it);
-    }
-    return out;
-  }
-
-  function isSameDay(d, ref) {
-    return (
-      d.getFullYear() === ref.getFullYear() &&
-      d.getMonth() === ref.getMonth() &&
-      d.getDate() === ref.getDate()
-    );
+    const items = restoreDates(merged);
+    if (!force) writeCache(items);
+    return { items, fromCache: false, fetchedAt: Date.now(), mode: "live" };
   }
 
   function filterByRange(items, range, now) {
@@ -386,19 +273,16 @@
     if (range === "yesterday") {
       const d = new Date(now);
       d.setDate(d.getDate() - 1);
-      return items.filter((it) => it.date && isSameDay(it.date, d));
+      return items.filter((it) => it.date && Core.isSameDay(it.date, d));
     }
     // "today"
-    return items.filter((it) => it.date && isSameDay(it.date, now));
+    return items.filter((it) => it.date && Core.isSameDay(it.date, now));
   }
 
   function statsFor(items, now) {
     now = now || new Date();
-    const today = items.filter((it) => it.date && isSameDay(it.date, now));
-    return {
-      total: items.length,
-      today: today.length,
-    };
+    const today = items.filter((it) => it.date && Core.isSameDay(it.date, now));
+    return { total: items.length, today: today.length };
   }
 
   window.AIRadar = {

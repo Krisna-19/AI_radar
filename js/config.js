@@ -133,7 +133,10 @@ const PROXY_STRATEGIES = [
 
 const CACHE_KEY = "airadar_cache_v1";
 const CACHE_TTL_MS = 15 * 60 * 1000; // reuse cache for 15 minutes
-const FETCH_TIMEOUT_MS = 12000;
+const FETCH_TIMEOUT_MS = 8000;
+
+/* Relative path of the pre-aggregated snapshot produced by scripts/build-news.js. */
+const SNAPSHOT_PATH = "data/news.json";
 
 const CATEGORIES = [
   { id: "research", label: "Research & Papers", icon: "🧠" },
@@ -142,3 +145,14 @@ const CATEGORIES = [
   { id: "policy", label: "Policy & Safety", icon: "⚖️" },
   { id: "news", label: "General AI News", icon: "📰" },
 ];
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = {
+    AI_SOURCES,
+    PROXY_STRATEGIES,
+    CACHE_KEY,
+    CACHE_TTL_MS,
+    FETCH_TIMEOUT_MS,
+    SNAPSHOT_PATH,
+  };
+}
