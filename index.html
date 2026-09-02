@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="AI RADAR - Your daily briefing of AI research, products, funding and policy, aggregated from leading sources."
+    />
+    <title>AI RADAR • Daily AI Intelligence</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='46' fill='%230ea5e9'/%3E%3Ctext x='50' y='66' font-size='52' text-anchor='middle' fill='white'%3Eb%3C/text%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="css/style.css" />
+  </head>
+  <body>
+    <canvas id="bg"></canvas>
+
+    <header class="site-header">
+      <div class="container nav">
+        <a class="logo" href="#">
+          <span class="logo-mark">📡</span>
+          <span class="logo-text">AI <b>RADAR</b></span>
+        </a>
+        <div class="nav-right">
+          <div class="clock-box">
+            <span id="clock">--:--</span>
+            <span id="today-date">—</span>
+          </div>
+          <button id="refresh-btn" class="btn-refresh" title="Refresh now">
+            ↻ Refresh
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="hero">
+        <div class="hero-glow"></div>
+        <h1>Your daily AI <span class="gradient">intelligence</span></h1>
+        <p>
+          Research, products, funding and policy across the frontier of
+          artificial intelligence — collected from labs, journals and top
+          newsrooms, every day.
+        </p>
+        <div class="stats">
+          <div class="stat">
+            <b id="stat-today">0</b>
+            <span>stories today</span>
+          </div>
+          <div class="stat">
+            <b id="stat-sources">0</b>
+            <span>live sources</span>
+          </div>
+          <div class="stat">
+            <b id="stat-updated">—</b>
+            <span>data status</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="toolbar">
+        <div class="search-wrap">
+          <input
+            id="search-input"
+            type="search"
+            placeholder="Search AI news, papers, companies…"
+            autocomplete="off"
+          />
+        </div>
+        <div class="chips-row" id="range-tabs"></div>
+        <div class="chips-row" id="category-chips"></div>
+        <div class="chips-row source-scroll" id="source-bar"></div>
+      </section>
+
+      <section class="top-stories">
+        <h2 class="section-title"><span>⭐</span> Top stories today</h2>
+        <div id="top-stories" class="top-grid"></div>
+      </section>
+
+      <section class="news">
+        <h2 class="section-title"><span>📰</span> The feed</h2>
+
+        <div id="loading" class="state-box">
+          <div class="spinner"></div>
+          <p>Scanning sources…</p>
+        </div>
+
+        <div id="error" class="state-box error-box" style="display: none"></div>
+
+        <div id="empty" class="state-box" style="display: none">
+          <p>No stories match this view. Try another day or category.</p>
+        </div>
+
+        <div id="news-grid" class="grid"></div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <span class="logo-text">AI <b>RADAR</b></span>
+        <p id="footer-status">Aggregating every day from leading AI sources.</p>
+        <p class="fine">
+          Headlines link to the original publishers. Content © their
+          respective owners.
+        </p>
+      </div>
+    </footer>
+
+    <script src="js/config.js"></script>
+    <script src="js/aggregator.js"></script>
+    <script src="js/app.js"></script>
+  </body>
+</html>

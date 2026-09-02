@@ -1,0 +1,11 @@
+{
+  "name": "ai-radar",
+  "version": "1.0.0",
+  "description": "AI RADAR - a daily aggregator of AI research, products, funding and policy news from leading sources.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": ["ai", "news", "rss", "aggregator"],
+  "license": "MIT"
+}
