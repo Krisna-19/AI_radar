@@ -1,114 +1,11 @@
 /*
- * AI RADAR - Source configuration
- * List of RSS feeds aggregated daily by the site.
+ * AI RADAR - Runtime configuration.
+ *
+ * The canonical list of news sources lives in sources/sources.json (see
+ * sources/index.js for loading + validation in Node). Browser code fetches
+ * that same file at runtime, so every environment shares ONE source
+ * definition instead of scattered copies.
  */
-
-const AI_SOURCES = [
-  {
-    id: "openai",
-    name: "OpenAI",
-    url: "https://openai.com/blog/rss.xml",
-    type: "company",
-    weight: 5,
-    color: "#10a37f",
-  },
-  {
-    id: "deepmind",
-    name: "Google DeepMind",
-    url: "https://deepmind.google/blog/rss.xml",
-    type: "company",
-    weight: 5,
-    color: "#4285f4",
-  },
-  {
-    id: "googleai",
-    name: "Google AI",
-    url: "https://blog.google/technology/ai/rss/",
-    type: "company",
-    weight: 4,
-    color: "#ea4335",
-  },
-  {
-    id: "huggingface",
-    name: "Hugging Face",
-    url: "https://huggingface.co/blog/feed.xml",
-    type: "company",
-    weight: 4,
-    color: "#ffd21e",
-  },
-  {
-    id: "googleresearch",
-    name: "Google Research",
-    url: "https://research.google/blog/rss/",
-    type: "company",
-    weight: 4,
-    color: "#fbbc05",
-  },
-  {
-    id: "arxiv",
-    name: "arXiv (cs.AI)",
-    url: "http://export.arxiv.org/rss/cs.AI",
-    type: "research",
-    weight: 3,
-    color: "#b31b1b",
-  },
-  {
-    id: "nature",
-    name: "Nature Mach. Intel.",
-    url: "https://www.nature.com/natmachintell.rss",
-    type: "research",
-    weight: 3,
-    color: "#6cb4ee",
-  },
-  {
-    id: "mit",
-    name: "MIT Tech Review",
-    url: "https://www.technologyreview.com/topic/artificial-intelligence/feed",
-    type: "media",
-    weight: 3,
-    color: "#ef7b45",
-  },
-  {
-    id: "venturebeat",
-    name: "VentureBeat AI",
-    url: "https://venturebeat.com/category/ai/feed/",
-    type: "media",
-    weight: 3,
-    color: "#0ec1af",
-  },
-  {
-    id: "verge",
-    name: "The Verge AI",
-    url: "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml",
-    type: "media",
-    weight: 3,
-    color: "#1b81e8",
-  },
-  {
-    id: "wired",
-    name: "WIRED AI",
-    url: "https://www.wired.com/feed/tag/ai/latest/rss",
-    type: "media",
-    weight: 3,
-    color: "#0a0a0a",
-  },
-  {
-    id: "techcrunch",
-    name: "TechCrunch AI",
-    url: "https://techcrunch.com/category/artificial-intelligence/feed/",
-    type: "media",
-    weight: 3,
-    color: "#2a9bd4",
-  },
-  {
-    id: "googlenews",
-    name: "Google News · AI",
-    url: "https://news.google.com/rss/search?q=artificial%20intelligence&hl=en-US&gl=US&ceid=US:en",
-    type: "media",
-    weight: 2,
-    color: "#4285f4",
-  },
-];
 
 /*
  * Ordered list of fetch strategies. Each one must be CORS-friendly
@@ -138,6 +35,9 @@ const FETCH_TIMEOUT_MS = 8000;
 /* Relative path of the pre-aggregated snapshot produced by scripts/build-news.js. */
 const SNAPSHOT_PATH = "data/news.json";
 
+/* Relative path of the canonical source configuration (fetched by the browser). */
+const SOURCES_PATH = "sources/sources.json";
+
 const CATEGORIES = [
   { id: "research", label: "Research & Papers", icon: "🧠" },
   { id: "product", label: "Products & Launches", icon: "🚀" },
@@ -147,8 +47,12 @@ const CATEGORIES = [
 ];
 
 if (typeof module !== "undefined" && module.exports) {
+  // Node: load the canonical source list (validated) for the snapshot pipeline.
+  const sources = require("../sources/index.js");
   module.exports = {
-    AI_SOURCES,
+    AI_SOURCES: sources.enabledSources,
+    SOURCES: sources,
+    SOURCES_PATH,
     PROXY_STRATEGIES,
     CACHE_KEY,
     CACHE_TTL_MS,

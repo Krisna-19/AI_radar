@@ -1,14 +1,53 @@
 /*
- * AI RADAR - Aggregator
- * Fetches RSS feeds, parses to items, dedupes, categorises and caches.
- * Pure helpers (extractText, categorize, …) live in shared.js so the same
- * logic is used by the browser and the Node snapshot builder.
+ * AI RADAR - Aggregator (browser)
+ * Fetches RSS feeds, parses to generic items and normalizes them through the
+ * SAME shared Core.enrichItem used by the Node pipeline (stable Stage-1 ids,
+ * identical output in every environment). Source definitions are loaded from
+ * the canonical sources/sources.json instead of a hardcoded array.
+ * Pure helpers (extractText, categorize, …) live in shared.js.
  */
 (function () {
   "use strict";
 
   const Core = window.AIRadarCore;
-  const { extractText, extractFirstImage, parseDate, categorize, computeScore, dedupe } = Core;
+  const {
+    extractText,
+    extractFirstImage,
+    parseDate,
+    computeScore,
+    dedupe,
+    canonicalKey,
+    buildStoryId,
+    validateSourceConfig,
+    applySourceDefaults,
+    enrichItem,
+  } = Core;
+
+  /* ---------------- Source configuration (canonical) ---------------- */
+
+  let sourceCache = null;
+  let sourceCacheLoaded = false;
+
+  async function ensureSources() {
+    if (sourceCacheLoaded) return sourceCache;
+    sourceCacheLoaded = true;
+    try {
+      const raw = await fetchWithTimeout(SOURCES_PATH, 6000);
+      const data = JSON.parse(raw);
+      const arr = Array.isArray(data) ? data : data.sources;
+      sourceCache = (Array.isArray(arr) ? arr : [])
+        .filter((s) => validateSourceConfig(s).valid)
+        .map(applySourceDefaults)
+        .filter((s) => s.enabled);
+    } catch (e) {
+      sourceCache = [];
+    }
+    return sourceCache;
+  }
+
+  function getSources() {
+    return sourceCacheLoaded ? sourceCache : null;
+  }
 
   /* ---------------- Fetch helpers ---------------- */
 
@@ -121,28 +160,7 @@
       .filter((it) => it.title && it.link);
   }
 
-  /* ---------------- Enrichment ---------------- */
-
-  function enrich(rawItems, source) {
-    return rawItems.map((it, i) => {
-      const date = parseDate(it.pubDate);
-      return {
-        id: source.id + "-" + i,
-        sourceId: source.id,
-        sourceName: source.name,
-        sourceType: source.type,
-        sourceColor: source.color,
-        sourceWeight: source.weight,
-        title: it.title || "Untitled",
-        link: it.link || "#",
-        date: date ? date.toISOString() : "",
-        description: it.description || "",
-        image: it.image || null,
-        category: categorize(it.title + " " + it.description),
-        score: computeScore(source.weight, date, i),
-      };
-    });
-  }
+  /* ---------------- Normalization (shared, stable ids) ---------------- */
 
   function restoreDates(items) {
     return items.map((it) => ({
@@ -151,7 +169,7 @@
     }));
   }
 
-  /* ---------------- Dispatcher: fetch + parse ---------------- */
+  /* ---------------- Dispatcher: fetch + parse + normalize ---------------- */
 
   async function loadSource(source) {
     try {
@@ -163,7 +181,8 @@
       } catch (e) {
         items = parseXmlFeed(raw);
       }
-      return enrich(items, source);
+      const nowMs = Date.now();
+      return items.map((rawIt, i) => enrichItem(rawIt, source, i, nowMs));
     } catch (e) {
       console.warn("Failed to load source " + source.name, e);
       return [];
@@ -234,8 +253,8 @@
   /* ---------------- Public API ---------------- */
 
   async function aggregate({ force = false } = {}) {
-    // 1) Use the committed snapshot when present - fast and reliable.
-    const snap = await trySnapshot();
+    // Parallel: canonical sources + committed snapshot.
+    const [snap] = await Promise.all([trySnapshot(), ensureSources()]);
     if (snap) return snap;
 
     // 2) Fall back to live aggregation with a short cache window.
@@ -245,11 +264,25 @@
       return { items, fromCache: true, fetchedAt: cache.fetchedAt, mode: "cache" };
     }
 
-    return aggregateLive(force);
+    // 3) Live mode must never hang the UI: bound it so the site can always
+    //    fall back to the sample/error state instead of spinning forever.
+    const LIVE_TIMEOUT_MS = 45000;
+    return withTimeout(aggregateLive(force), LIVE_TIMEOUT_MS);
+  }
+
+  /* Resolve with whatever the promise yields within ms, else an empty result.
+   * The caller decides what to do with an empty set (sample fallback). */
+  function withTimeout(promise, ms) {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve({ items: [], mode: "timeout" }), ms);
+      promise.then(resolve, resolve).finally(() => clearTimeout(timer));
+    });
   }
 
   async function aggregateLive(force) {
-    const perSource = await mapLimit(AI_SOURCES, 3, loadSourceWithRetry);
+    const sources = getSources() || [];
+    if (sources.length === 0) return { items: [], fromCache: false, fetchedAt: Date.now(), mode: "live" };
+    const perSource = await mapLimit(sources, 3, loadSourceWithRetry);
     const merged = dedupe(perSource.flat());
     merged.sort(
       (a, b) =>
@@ -289,6 +322,7 @@
     aggregate,
     filterByRange,
     statsFor,
-    aiSources: AI_SOURCES,
+    ensureSources,
+    getSources,
   };
 })();

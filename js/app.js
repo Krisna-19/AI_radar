@@ -21,6 +21,7 @@
     loading: document.getElementById("loading"),
     error: document.getElementById("error"),
     empty: document.getElementById("empty"),
+    notice: document.getElementById("notice"),
     footerStatus: document.getElementById("footer-status"),
   };
 
@@ -188,14 +189,29 @@
     els.todayDate.textContent = fmtDate(now);
   }
 
+  /* Combined view of the canonical source config plus any sources only
+   * observable through ingested items (fallback if sources.json is unreachable). */
+  function sourceList() {
+    const map = Object.create(null);
+    (AIRadar.getSources() || []).forEach((s) => {
+      map[s.id] = { id: s.id, name: s.name, color: s.color };
+    });
+    state.items.forEach((it) => {
+      if (!map[it.sourceId]) {
+        map[it.sourceId] = { id: it.sourceId, name: it.sourceName, color: it.sourceColor };
+      }
+    });
+    return Object.values(map);
+  }
+
   function renderSourceBar() {
+    const srcs = sourceList();
     const allActive = state.sources.size === 0;
     let html =
       '<button class="chip source-chip' +
       (allActive ? " active" : "") +
       '" data-src="all">All sources</button>';
-    state.sourcesIndex = state.sourcesIndex || {};
-    for (const s of AI_SOURCES) {
+    for (const s of srcs) {
       const active = state.sources.has(s.id);
       html +=
         '<button class="chip source-chip' +
@@ -395,32 +411,82 @@
           (it.description || "").toLowerCase().includes(q)
       );
     }
-    const ranged = state.range === "all" ? items : AIRadar.filterByRange(items, state.range);
-    const since = state.range === "week" ? items : ranged;
-    const top = state.range === "today" ? ranged : since;
-    return { ranged, since, items: top };
+    const ranged = AIRadar.filterByRange(items, state.range);
+    return { base: items, ranged };
+  }
+
+  /* Most recent items within N hours - used as a graceful fallback when the
+   * "Today" tab is legitimately empty early in the day. */
+  function latestItems(items, hours) {
+    hours = hours || 48;
+    const now = Date.now();
+    return items
+      .filter((it) => it.date && now - it.date.getTime() <= hours * 3600000)
+      .sort((a, b) => (b.date ? +b.date : 0) - (a.date ? +a.date : 0));
+  }
+
+  function emptyMessage() {
+    if (state.search) {
+      return (
+        "<p>No stories match \u201C" + escapeHtml(state.search) + "\u201D. Try a different search or clear filters.</p>"
+      );
+    }
+    if (state.category !== "all") {
+      return "<p>No stories in this category for the selected range. Try another category or range.</p>";
+    }
+    if (state.sources.size > 0) {
+      return "<p>No stories from the selected sources for this range. Tap \u201CAll sources\u201D to widen.</p>";
+    }
+    if (state.range !== "week") {
+      return "<p>No stories published yet for this range. Check back later or switch to \u201CThis week\u201D.</p>";
+    }
+    return "<p>Nothing here yet. New stories are added continuously throughout the day.</p>";
+  }
+
+  function renderNotice(html) {
+    els.notice.innerHTML = html || "";
+    els.notice.style.display = html ? "block" : "none";
   }
 
   function renderAll() {
-    const { ranged } = applyFilters();
+    const { base, ranged } = applyFilters();
+
+    // "Today" with no published stories yet -> never show a confusing empty
+    // page; explain it and surface the most recent stories instead.
+    const todayFallback =
+      state.range === "today" && ranged.length === 0 && base.length > 0;
+    const showItems = todayFallback
+      ? latestItems(base, 48)
+      : ranged;
 
     if (state.range === "today") {
-      const top = [...ranged].sort((a, b) => (b.score || 0) - (a.score || 0));
+      const top = todayFallback
+        ? []
+        : [...ranged].sort((a, b) => (b.score || 0) - (a.score || 0));
       renderTopStories(top);
     } else {
       els.topStories.innerHTML = "";
     }
 
-    els.grid.innerHTML = ranged.length
-      ? ranged.map(cardHtml).join("")
+    renderNotice(
+      todayFallback
+        ? "<strong>No new stories published yet today.</strong> Showing the most recent 48 hours instead (snapshot generated " +
+            timeAgo(new Date(state.fetchedAt)) +
+            ")."
+        : ""
+    );
+
+    els.grid.innerHTML = showItems.length
+      ? showItems.map(cardHtml).join("")
       : "";
-    els.empty.style.display = ranged.length ? "none" : "block";
+    els.empty.style.display = showItems.length ? "none" : "block";
+    if (!showItems.length) els.empty.innerHTML = emptyMessage();
   }
 
   function renderStats() {
     const { today, total } = AIRadar.statsFor(state.items);
     els.statToday.textContent = today;
-    els.statSources.textContent = state.sourcesActiveCount || AI_SOURCES.length;
+    els.statSources.textContent = state.sourcesActiveCount ?? "\u2014";
     const mode =
       state.mode === "snapshot"
         ? "snapshot"
@@ -488,6 +554,7 @@
   async function load(force) {
     setLoading(true);
     try {
+      await AIRadar.ensureSources();
       const result = await AIRadar.aggregate({ force: force || state.refresh });
       state.refresh = false;
       state.mode = result.mode || (result.fromCache ? "cache" : "live");
@@ -504,16 +571,17 @@
       }
       state.sourcesActiveCount = new Set(state.items.map((i) => i.sourceId)).size;
       state.sources = state.sources.size
-        ? new Set([...state.sources].filter((s) => AIRadar.aiSources.some((x) => x.id === s)))
+        ? new Set([...state.sources].filter((s) => sourceList().some((x) => x.id === s)))
         : state.sources;
       renderSourceBar();
       renderAll();
       renderStats();
+      const count = sourceList().length || state.sourcesActiveCount;
       const updatedInfo = state.mode === "snapshot"
-        ? "Automatic snapshot generated " + timeAgo(new Date(state.fetchedAt)) + " from " + AI_SOURCES.length + " sources."
+        ? "Automatic snapshot generated " + timeAgo(new Date(state.fetchedAt)) + " from " + count + " sources."
         : state.mode === "cache"
         ? "Showing cached snapshot — pull to refresh for the latest."
-        : "Fetched live from " + AI_SOURCES.length + " sources.";
+        : "Fetched live from " + count + " sources.";
       els.footerStatus.textContent = updatedInfo;
     } catch (e) {
       showError("Could not load news. Click here to try again.");

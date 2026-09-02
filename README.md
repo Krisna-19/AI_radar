@@ -8,7 +8,7 @@
 
 ## 1. What it is
 
-AI RADAR is a **self-hosted daily AI-news aggregator**. Every few hours it fetches updates from 13 AI-focused RSS sources, dedupes and classifies them, then serves them as a polished, mobile-friendly feed — sorted so the freshest, most important stories surface at the top each day.
+AI RADAR is a **self-hosted daily AI-news aggregator**. Every few hours it fetches updates from 13 AI-focused RSS sources from a single canonical config file, dedupes and classifies them, then serves them as a polished, mobile-friendly feed — sorted so the freshest, most important stories surface at the top each day.
 
 ## 2. Features
 
@@ -31,31 +31,38 @@ AI RADAR is a **self-hosted daily AI-news aggregator**. Every few hours it fetch
 | Research | arXiv (cs.AI), Nature Machine Intelligence |
 | Media / newsrooms | MIT Tech Review, VentureBeat AI, The Verge AI, WIRED AI, TechCrunch AI, Google News · AI |
 
+The source list is **one file**: `sources/sources.json`. Add/disable/retune a feed
+there and it takes effect in both the pipeline and the UI. See
+[`SOURCES.md`](SOURCES.md) for the schema and how to add a source.
+
 Two sources originally evaluated (Anthropic, MarkTechPost) were swapped during testing because they don't publish parseable RSS.
 
 ## 4. Tech stack & architecture
 
 - **Frontend:** Vanilla HTML/CSS/JS (no frameworks, no build step)
 - **Backend / API:** Zero-dependency Node `server.js` (static file server + RSS proxy)
-- **Aggregation:** Browser-side (for local runs) **or** a Node snapshot builder using `fast-xml-parser`
+- **Aggregation:** Node pipeline (`scripts/pipeline/`) using `fast-xml-parser`; browser-side fallback for local runs
 - **Hosting & automation:** GitHub Pages + GitHub Actions (both free)
 
 Data pipeline:
 
 ```
-13 RSS feeds
-   │  (GitHub Actions, every 3h)
+sources/sources.json  (canonical config — 13 feeds)
+   │  (GitHub Actions: every 3h / on code push; runs npm test first)
    ▼
-scripts/build-news.js  ── fetches + parses + dedupes + classifies + scores
+scripts/build-news.js ──┴─> scripts/pipeline/ingest.js  (fetch + parse RSS/Atom/RDF)
+                          └─> shared js/shared.js        (enrich → stable IDs → dedupe → score)
    │
    ▼
-data/news.json  (committed to repo)
+data/news.json  (committed to repo; embeds per-source stats)
    │  (static file, same origin — no CORS, no proxies)
    ▼
-Browser (js/aggregator.js)  ── reads snapshot → js/app.js renders the feed
+Browser (js/aggregator.js)  ── reads snapshot + sources/sources.json → js/app.js renders
 ```
 
-Shared pure logic lives in `js/shared.js`, used identically by the browser and the Node builder.
+Shared pure logic lives in `js/shared.js`, used identically by the browser and the
+Node pipeline (identical stories, identical IDs). Architecture details:
+[`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## 5. Project structure
 
@@ -64,17 +71,28 @@ AI_radar/
 ├── index.html                # Single-page layout
 ├── css/style.css             # Dark "radar" theme
 ├── js/
-│   ├── config.js             # Sources + fetch strategies + settings
-│   ├── shared.js             # Pure helpers (browser + Node)
+│   ├── config.js             # Fetch strategies + paths (Node loads sources)
+│   ├── shared.js             # Pure helpers (browser + Node, single normalize step)
 │   ├── aggregator.js         # Snapshot / cache / live aggregation
 │   └── app.js                # Rendering, filters, search, clock
+├── sources/
+│   ├── sources.json          # Canonical source config (only place to add feeds)
+│   └── index.js              # Sources loader + validation (Node)
 ├── scripts/
-│   └── build-news.js         # Node snapshot builder (used by CI)
+│   ├── build-news.js         # Snapshot builder (used by CI)
+│   └── pipeline/
+│       ├── env.js            # Minimal .env loader (zero-dep)
+│       ├── http.js           # Classified timeout/http/network/empty fetch
+│       ├── feed.js           # RSS 2.0 / Atom / RSS 1.0-RDF parser
+│       └── ingest.js         # Unified ingestion (dry-run CLI too)
 ├── data/news.json            # Committed snapshot (auto-refreshed)
 ├── server.js                 # Local static server + RSS proxy (zero-dep)
 ├── package.json
+├── .env.example              # Local env template (copy to .env)
 └── .github/workflows/news.yml# 3-hourly snapshot refresh
 ```
+
+Docs: [`ARCHITECTURE.md`](ARCHITECTURE.md) · [`SOURCES.md`](SOURCES.md) · [`SETUP.md`](SETUP.md)
 
 ## 6. Local development
 
@@ -82,8 +100,11 @@ AI_radar/
 npm install        # only needed for the snapshot builder
 npm start          # serves the site at http://localhost:8080
 npm run build:news # manually regenerate data/news.json from the 13 feeds
+node scripts/pipeline/ingest.js   # dry-run: check every feed, no file writes
+npm test           # 29 unit tests (config validation, parsers, identity keys)
 ```
 
+See [`SETUP.md`](SETUP.md) for the full guide (env vars, tests, troubleshooting).
 Without `npm install`, the site still runs: the frontend falls back to free CORS proxies and finally embedded sample content.
 
 ## 7. Deployment — where & how
@@ -94,7 +115,7 @@ Without `npm install`, the site still runs: the frontend falls back to free CORS
 - **URL:** https://krisna-19.github.io/AI_radar/
 - **Pipeline:** GitHub Actions (`.github/workflows/news.yml`)
   - Schedule: `0 */3 * * *` (every 3 hours) + manual `workflow_dispatch`
-  - Job: `npm ci` → `node scripts/build-news.js` → commit `data/news.json` → push → Pages redeploys (~1 min)
+  - Job: `npm ci` → `npm test` → `node scripts/build-news.js` → commit `data/news.json` → push → Pages redeploys (~1 min)
 
 Every push to `main` also rebuilds Pages, so code changes propagate automatically.
 

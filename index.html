@@ -51,7 +51,7 @@
           </div>
           <div class="stat">
             <b id="stat-sources">0</b>
-            <span>live sources</span>
+            <span>sources scanned</span>
           </div>
           <div class="stat">
             <b id="stat-updated">—</b>
@@ -82,6 +82,8 @@
       <section class="news">
         <h2 class="section-title"><span>📰</span> The feed</h2>
 
+        <div id="notice" class="notice" style="display: none"></div>
+
         <div id="loading" class="state-box">
           <div class="spinner"></div>
           <p>Scanning sources…</p>
@@ -89,9 +91,7 @@
 
         <div id="error" class="state-box error-box" style="display: none"></div>
 
-        <div id="empty" class="state-box" style="display: none">
-          <p>No stories match this view. Try another day or category.</p>
-        </div>
+        <div id="empty" class="state-box" style="display: none"></div>
 
         <div id="news-grid" class="grid"></div>
       </section>
