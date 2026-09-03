@@ -9,8 +9,9 @@ It is read by:
   it builds the source filter chips.
 
 Both environments validate the same shape through the shared helpers in
-`js/shared.js` (`validateSourceConfig` / `applySourceDefaults` / `enrichItem`), so a
-source added here works everywhere with **no code changes**.
+`js/shared.js` (`validateSourceConfig` / `applySourceDefaults` / `normalizeItem`),
+so a source added here works everywhere with **no code changes**. Each fetched
+item is normalized into the canonical Story model (see [SCHEMA.md](SCHEMA.md)).
 
 > Policy: only **public feeds (RSS / Atom)** are used. No aggressive scraping —
 > if a site has no parseable feed, it is not a source.

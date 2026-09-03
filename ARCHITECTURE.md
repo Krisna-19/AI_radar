@@ -4,7 +4,7 @@ This document describes the current architecture of AI RADAR and the target
 architecture we are evolving toward (approved roadmap, Stage 1..10). It is a
 living document: update it whenever a stage lands.
 
-## 1. Current architecture (as of Stage 2)
+## 1. Current architecture (as of Stage 3)
 
 ### Stack
 - 100% static web app (no framework, no build step) served by GitHub Pages
@@ -21,16 +21,18 @@ living document: update it whenever a stage lands.
 13 source definitions — sources/sources.json (canonical, served to the browser too)
    ├─ CI (every 3h or on code path push)
    │    build-news.js
-   │      └─ pipeline: sources/index.js -> ingest.js (fetch+parse) -> shared enrichItem
-   │            -> dedupe -> data/news.json {generatedAt, stats, sources, items}
+   │      └─ pipeline: sources/index.js -> ingest.js (fetch+parse)
+   │            -> normalizeItem (canonical Story, schemaVersion 1.0)
+   │            -> validateStory -> dedupe
+   │            -> data/news.json {generatedAt, stats, sources, items}
    │      -> npm test gate -> git commit -> GitHub Pages
    │
    └─ browser (fallback only when the snapshot is missing)
         fetch proxy chain (local /api -> rss2json -> allorigins -> codetabs)
-        -> parse -> enrich -> dedupe -> render
-Frontend reads data/news.json (it ignores the new `stats`/`sources` fields),
-renders Today / Yesterday / This week, search, category + source filters,
-Top Stories. Source chips come from sources/sources.json.
+        -> parse -> normalizeItem -> dedupe -> render
+Frontend reads data/news.json (it ignores stats/sources fields), renders Today /
+Yesterday / This week, search, category + source filters, Top Stories. Source
+chips come from sources/sources.json.
 ```
 
 ### Identity model (Stage 1)
@@ -84,28 +86,53 @@ Top Stories. Source chips come from sources/sources.json.
 - Nature's feed is RSS 1.0 (`<rdf:RDF>`), which the parser now handles — it was
   silently returning 0 items before Stage 2.
 
-### Testing (Stage 1 + Stage 2)
+### Canonical Story schema (Stage 3)
+- `normalizeItem(rawItem, source, opts)` in `js/shared.js` is the **single
+  normalization function** (browser + Node). It turns raw parser output into a
+  **canonical Story** (`schemaVersion: "1.0"`) with nested `source{}`,
+  `scores{}`, `ai{}`, `publishedAt`/`discoveredAt`, `originalUrl`/`canonicalUrl`,
+  entity arrays, `relatedStoryIds`, `sources`, etc. — see [SCHEMA.md](SCHEMA.md).
+- URL normalization (`canonicalizeUrl`) strips tracking params (`utm_*`,
+  `fbclid`, `gclid`, …) into `canonicalUrl` while keeping the untouched
+  `originalUrl`. Timestamp normalization (`normalizeTimestamp`) emits UTC
+  ISO-8601 or `null` (never invents dates).
+- **Determinism**: same raw item + source ⇒ same `id`, `fingerprint`,
+  `canonicalUrl` (djb2 hash, no randomness) — unchanged from Stage 1.
+- `enrichItem()` is now a thin compatibility alias over `normalizeItem`, so the
+  Stage 2 pipeline shape and the current frontend keep working.
+- `validateStory(story)` returns `{ valid, errors }`; `build-news.js` logs and
+  drops invalid stories (never silently) and records
+  `stats.rejectedValidated`. Optional fields always render as `null`/`[]`.
+- Backward compatibility: the canonical Story also exposes the flat legacy
+  aliases (`link`, `date`, `score`, `sourceId`, `sourceName`, `sourceType`, …)
+  so existing filters, search, date grouping, source display and tests remain
+  intact — **no frontend redesign** in Stage 3.
+
+### Testing (Stage 1 + Stage 2 + Stage 3)
 - Node built-in test runner, zero extra dependencies: `npm test`
-  (`node --test tests/*.test.js`), **29 tests** (Stage 1 identity/empty-state +
-  Stage 2 config validation, RSS/Atom/RSS-1.0/RDF fixtures, lenient-parser
-  truncation, `lineFor` formatting).
+  (`node --test tests/*.test.js`), **48 tests** (Stage 1 identity/empty-state +
+  Stage 2 config/parser/pipeline + Stage 3 canonical schema incl. RSS/Atom/RDF,
+  URL tracking, timestamps, stable ids, validation, multi-source).
 - Run in CI before the snapshot is regenerated, and on every relevant code push.
 - Browser-level smoke checks are run locally (jsdom harness) before pushing.
+- Snapshot verification runs at build time: every generated story is validated
+  against the schema and the counts are reported.
 
 ## 2. Current limitations (drivers for the roadmap)
 - Snapshot is **replaced, never appended** -> no history, no cross-day
   dedup, weak search ("This week"/"Yesterday" are often empty).
-- Deduplication is title+URL exact-match only (no similarity clustering).
-- Categories are keyword heuristics; "score" is `exp(-hours/30) x weight` —
-  not transparent and not component-based.
-- No summaries, no entities, no Radar Score, no AI interpretation layer.
-- The unified pipeline (Stage 2) covers CI ingestion. The **browser live
-  fallback** (only used when the snapshot is missing) still parses feeds with
-  DOMParser instead of the Node `feed.js` path — same source config, two parsers.
-- High-volume feeds (OpenAI, Hugging Face) emit > 1,000 items each when their
-  endpoint is generous, so the snapshot can grow large between refreshes.
-- No detailed docs for Stage 3+ (normalize/dedupe/classify/score/store land in
-  the roadmap).
+- Deduplication is title+URL exact-match only (no similarity clustering) —
+  `relatedStoryIds`/`sources` exist in the schema but stay empty (Stage 4).
+- Categories are keyword heuristics; `scores.*` components and entities stay
+  `null`/`[]` (radar Score is Stage 6, entities/classify Stage 6).
+- No summaries, no AI interpretation layer (`ai.*` null — Stage 7).
+- The browser live fallback still parses feeds with DOMParser instead of the
+  Node `feed.js` path — same source config + same canonical normalizer, two XML
+  parsers.
+- High-volume feeds (OpenAI, Hugging Face) emit > 1,000 items each, so the
+  snapshot can grow large between refreshes.
+- No detailed docs for Stage 4+ (dedupe/classify/score/store land in the
+  roadmap; the canonical Story schema is documented in [SCHEMA.md](SCHEMA.md)).
 
 ## 3. Target architecture (approved roadmap)
 
@@ -118,7 +145,7 @@ FRONTEND (GitHub Pages, static)
 BACKEND = GitHub Actions (the "server")
   scripts/pipeline/
     1 ingest.js     sources/* config -> fetch (no aggressive scraping)
-    2 normalize.js  canonical Story schema (pure)
+    2 normalize.js  canonical Story schema (pure)   <-- implemented in shared.js (Stage 3)
     3 dedupe.js     canonical-URL + title + n-gram similarity clustering,
                     merges duplicates into one story with sources[]
     4 classify.js   12 categories + entities (companies/models/people/
@@ -151,7 +178,7 @@ CONFIG / SECRETS / TESTS / DOCS
 ### Stage plan (each stage tested before the next)
 1. ~~Fix empty/zero states + stable identity keys~~ **done**
 2. ~~`sources/` modular config + unified `ingest.js` parser + reliability stats~~ **done**
-3. `normalize.js` canonical Story schema
+3. ~~`normalize.js` canonical Story schema~~ **done** (implemented in `js/shared.js`, see SCHEMA.md)
 4. `dedupe.js` similarity clustering -> "Reported by N sources"
 5. Persistence: `store.js` per-day NDJSON + index, idempotent upserts, CI writes
 6. `classify.js` (12 categories) + entities + transparent `score.js` Radar Score
@@ -165,7 +192,8 @@ CONFIG / SECRETS / TESTS / DOCS
   proxy for live fallback debugging).
 - Regenerate the snapshot: `npm run build:news`.
 - Check feeds without writing files: `node scripts/pipeline/ingest.js`.
-- Tests: `npm test` (29 tests).
+- Tests: `npm test` (48 tests).
 - Push triggers the CI pipeline (tests + fresh snapshot + Pages deploy).
 - Full local setup + troubleshooting: [SETUP.md](SETUP.md);
-  source catalog/how-to-add: [SOURCES.md](SOURCES.md).
+  source catalog/how-to-add: [SOURCES.md](SOURCES.md);
+  canonical data model: [SCHEMA.md](SCHEMA.md).

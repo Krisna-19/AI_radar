@@ -44,13 +44,14 @@ covers `.env`); CI uses GitHub Action secrets instead.
 ## 4. Tests
 
 ```bash
-npm test           # node --test tests/*.test.js  (expect 29/29)
+npm test           # node --test tests/*.test.js  (expect 48/48)
 ```
 
-Covers Stage 1 (identity keys, empty states) and Stage 2 (source config
-validation, RSS/Atom/RSS-1.0 parsing, graceful feed failure handling, line
-formatting). Tests are also run in CI on every code push before the snapshot is
-regenerated.
+Covers Stage 1 (identity keys, empty states), Stage 2 (source config validation,
+RSS/Atom/RSS-1.0 parsing, graceful feed failure handling, line formatting) and
+Stage 3 (canonical Story schema: RSS/Atom/RDF normalization, URL tracking params,
+timestamp normalization, stable ids, schema validation, multi-source). Tests are
+also run in CI on every code push before the snapshot is regenerated.
 
 ## 5. Rebuild the news snapshot
 
@@ -59,9 +60,12 @@ npm run build:news # node scripts/build-news.js
 ```
 
 This fetches all enabled sources from `sources/sources.json`, parses each feed,
-normalizes items via the shared `js/shared.js` step (stable Story IDs), dedupes,
-and writes `data/news.json`. It **aborts with exit code 1** if the source config is
-invalid or zero items survive.
+and normalizes every item into a **canonical Story** (`js/shared.js`
+`normalizeItem`, see [SCHEMA.md](SCHEMA.md)) with stable IDs. It **validates each
+story** and logs + drops any that fail validation (never silently), then dedupes
+and writes `data/news.json`. It **aborts with exit code 1** if the source config
+is invalid or zero items survive. The final line reports normalized vs rejected
+counts (e.g. `Saved 2846 unique items … (normalized 2847, rejected 0)`).
 
 To check feeds without writing any file (diagnostic dry run):
 

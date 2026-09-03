@@ -293,35 +293,242 @@
     });
   }
 
-  /* ---------------- Basic normalization (unified) ----------------
-   * The single normalize step used by BOTH the browser pipeline (js/aggregator.js)
-   * and the Node pipeline (scripts/pipeline/ingest.js). Raw parser output
-   * (generic {title, link, pubDate, description, image}) becomes a fully
-   * enriched story. Stable ids from Stage 1 are produced here so they are
-   * guaranteed identical in every environment. */
+  /* ---------------- Canonical Story (Stage 3) ----------------
+   * normalizeItem() is the SINGLE normalization function. Raw parser output
+   * (generic {title, link, pubDate, description, image}) becomes a canonical
+   * Story conforming to SCHEMA.md (schemaVersion "1.0").
+   *
+   * The canonical Story carries BOTH:
+   *   - the nested canonical fields (source{}, scores{}, publishedAt,
+   *     originalUrl/canonicalUrl, entities, ai, …) required by later stages
+   *     (dedupe/classify/summarize/store), AND
+   *   - the flat legacy compatibility fields (id, title, link, date, score,
+   *     sourceId, sourceName, sourceType, sourceColor, sourceWeight, category,
+   *     description, image, fingerprint, discoveredAt) that the CURRENT
+   *     frontend reads. This keeps Stage 1/2 behavior byte-for-byte stable so
+   *     the existing UI, filters, search and date grouping keep working with
+   *     zero frontend changes.
+   *
+   * Determinism: for a given rawItem + source the id, fingerprint and
+   * canonicalUrl are always identical (djb2 hash, no randomness). Pass opts.nowMs
+   * in tests to pin discoveredAt. */
 
-  function enrichItem(rawItem, source, index, nowMs) {
-    const date = parseDate(rawItem.pubDate);
-    const title = (rawItem && rawItem.title) || "Untitled";
-    const link = (rawItem && rawItem.link) || "#";
-    const description = (rawItem && rawItem.description) || "";
-    return {
-      id: buildStoryId(title, link),
-      fingerprint: canonicalKey(title, link),
-      discoveredAt: new Date(nowMs == null ? Date.now() : nowMs).toISOString(),
+  const SCHEMA_VERSION = "1.0";
+
+  /* Query parameters that are unambiguous click-tracking noise and can be
+   * removed safely when building canonicalUrl. Names are matched case-
+   * insensitively; every utm_* parameter (utm_source, utm_campaign, …) is
+   * stripped regardless of suffix. Generic parameters whose absence could
+   * change the article identity (e.g. ?id=, ?p=, News-Google's googlenews
+   * params) are deliberately NOT removed. */
+  const TRACKING_PARAMS = [
+    "fbclid", "gclid", "msclkid", "yclid", "dclid", "gbraid", "wbraid",
+    "mc_cid", "mc_eid", "igshid", "vero_id", "_hsenc", "_hsmi", "ref_src",
+    "ref_url", "campaign", "ocid",
+  ];
+
+  /* Normalize an article URL: lowercase the host, drop tracking params, and
+   * let URL serialization produce a stable, deterministic form. Returns null
+   * for unparseable input. The caller keeps the ORIGINAL in originalUrl. */
+  function canonicalizeUrl(url) {
+    if (!url || typeof url !== "string") return null;
+    try {
+      const u = new URL(url.trim());
+      u.hostname = u.hostname.toLowerCase();
+      const keys = Array.from(u.searchParams.keys());
+      for (const k of keys) {
+        const kl = k.toLowerCase();
+        if (kl.indexOf("utm_") === 0 || TRACKING_PARAMS.indexOf(kl) !== -1) {
+          u.searchParams.delete(k);
+        }
+      }
+      return u.toString();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /* Normalize any valid date-ish value to UTC ISO-8601; null if unusable.
+   * Handles RSS pubDate, Atom updated/published and RDF dc:date alike because
+   * they all parse through Date. We never invent a date: if the source is
+   * missing/garbage, publishedAt stays null (downstream falls back to
+   * discoveredAt where appropriate). */
+  function normalizeTimestamp(value) {
+    if (value == null || value === "") return null;
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? null : d.toISOString();
+  }
+
+  /* Collapse whitespace and trim a textual field. Returns null for empty. */
+  function normalizeText(value) {
+    if (value == null) return null;
+    const s = String(value).replace(/\s+/g, " ").trim();
+    return s.length ? s : null;
+  }
+
+  /* Always return an array (never undefined) for list fields. */
+  function normalizeArray(value) {
+    if (value == null) return [];
+    return Array.isArray(value) ? value : [];
+  }
+
+  /* Build a canonical Story from raw parser output + a validated source config. */
+  function normalizeItem(rawItem, source, opts) {
+    opts = opts || {};
+    const raw = rawItem || {};
+    const nowMs = opts.nowMs == null ? Date.now() : opts.nowMs;
+
+    const title = normalizeText(raw.title) || "Untitled";
+    const description = normalizeText(raw.description);
+    const originalUrl = normalizeText(raw.link) || "";
+    const canonicalUrl = canonicalizeUrl(originalUrl) || originalUrl;
+    const published = normalizeTimestamp(raw.pubDate);
+    const discoveredAt = new Date(nowMs).toISOString();
+
+    const category = categorize((title + " " + (description || "")).trim());
+    const dateObj = published ? new Date(published) : null;
+    const legacyScore = computeScore(source.weight, dateObj, opts.index || 0);
+
+    const story = {
+      schemaVersion: SCHEMA_VERSION,
+      id: buildStoryId(title, originalUrl),
+      fingerprint: canonicalKey(title, originalUrl),
+
+      title,
+      description,
+      originalUrl,
+      canonicalUrl,
+
+      source: {
+        id: source.id,
+        name: source.name,
+        type: source.category,
+        reliability: source.reliability,
+        priority: source.priority,
+        weight: source.weight,
+        color: source.color,
+      },
+
+      publishedAt: published,
+      discoveredAt,
+
+      author: null,
+      imageUrl: normalizeText(raw.image),
+
+      category,
+      subcategory: null,
+
+      tags: normalizeArray(raw.tags),
+      companies: [],
+      people: [],
+      models: [],
+      technologies: [],
+      countries: [],
+
+      content: null,
+
+      ai: {
+        summary: null,
+        whyItMatters: null,
+        keyTakeaways: [],
+      },
+
+      scores: {
+        importance: null,
+        impact: null,
+        novelty: null,
+        credibility: null,
+        relevance: null,
+        sourceConfidence: null,
+      },
+
+      relatedStoryIds: [],
+      sources: [],
+
+      createdAt: discoveredAt,
+      updatedAt: discoveredAt,
+
+      /* ---- legacy flat compatibility aliases (frontend + Stage 1/2) ---- */
       sourceId: source.id,
       sourceName: source.name,
       sourceType: source.category,
       sourceColor: source.color,
       sourceWeight: source.weight,
-      title,
-      link,
-      date: date ? date.toISOString() : "",
-      description,
-      image: (rawItem && rawItem.image) || null,
-      category: categorize(title + " " + description),
-      score: computeScore(source.weight, date, index || 0),
+      link: originalUrl,
+      date: published,
+      image: normalizeText(raw.image),
+      score: legacyScore,
     };
+
+    return story;
+  }
+
+  /* Compatibility wrapper preserved so the Stage 2 pipeline/tests and the
+   * browser aggregator keep a stable call shape: enrichItem(raw, source, index,
+   * nowMs) === normalizeItem(raw, source, { index, nowMs }). Single source of
+   * truth - no second normalizer exists. */
+  function enrichItem(rawItem, source, index, nowMs) {
+    return normalizeItem(rawItem, source, { index: index || 0, nowMs });
+  }
+
+  /* Validate an already-normalized canonical Story. Returns { valid, errors }
+   * with { field, message } entries. Used to gate the snapshot and to surface
+   * why a story was rejected (never silently dropped). */
+  function validateStory(story) {
+    const errors = [];
+    if (!story || typeof story !== "object") {
+      return { valid: false, errors: [{ field: "*", message: "missing story" }] };
+    }
+    const s = story;
+    if (s.schemaVersion !== SCHEMA_VERSION) {
+      errors.push({ field: "schemaVersion", message: "expected " + SCHEMA_VERSION + ", got " + s.schemaVersion });
+    }
+    if (typeof s.id !== "string" || !/^s[0-9a-f]{8}$/.test(s.id)) {
+      errors.push({ field: "id", message: "must match s + 8 hex chars" });
+    }
+    if (typeof s.fingerprint !== "string" || !s.fingerprint) {
+      errors.push({ field: "fingerprint", message: "required non-empty string" });
+    }
+    if (typeof s.title !== "string" || !s.title.trim()) {
+      errors.push({ field: "title", message: "required non-empty string" });
+    }
+    if (!s.originalUrl && !s.canonicalUrl) {
+      errors.push({ field: "url", message: "at least one of originalUrl/canonicalUrl required" });
+    }
+    if (s.originalUrl && !/^https?:\/\//i.test(s.originalUrl)) {
+      errors.push({ field: "originalUrl", message: "must be an http(s) URL" });
+    }
+    if (s.canonicalUrl && !/^https?:\/\//i.test(s.canonicalUrl)) {
+      errors.push({ field: "canonicalUrl", message: "must be an http(s) URL" });
+    }
+    if (!s.source || typeof s.source !== "object") {
+      errors.push({ field: "source", message: "required source object" });
+    } else {
+      if (typeof s.source.id !== "string" || !s.source.id) {
+        errors.push({ field: "source.id", message: "required" });
+      }
+      if (typeof s.source.name !== "string" || !s.source.name) {
+        errors.push({ field: "source.name", message: "required" });
+      }
+    }
+    if (s.publishedAt != null && Number.isNaN(new Date(s.publishedAt).getTime())) {
+      errors.push({ field: "publishedAt", message: "invalid date" });
+    }
+    if (typeof s.discoveredAt !== "string" || Number.isNaN(new Date(s.discoveredAt).getTime())) {
+      errors.push({ field: "discoveredAt", message: "required valid date" });
+    }
+    for (const listField of ["tags", "companies", "people", "models", "technologies", "countries", "relatedStoryIds", "sources"]) {
+      if (s[listField] != null && !Array.isArray(s[listField])) {
+        errors.push({ field: listField, message: "must be an array" });
+      }
+    }
+    if (s.scores != null && s.scores !== undefined && typeof s.scores !== "object") {
+      errors.push({ field: "scores", message: "must be an object" });
+    }
+    if (s.ai != null && s.ai !== undefined && typeof s.ai !== "object") {
+      errors.push({ field: "ai", message: "must be an object" });
+    }
+    return { valid: errors.length === 0, errors };
   }
 
   const api = {
@@ -343,6 +550,14 @@
     validateSourceConfig,
     applySourceDefaults,
     enrichItem,
+    SCHEMA_VERSION,
+    TRACKING_PARAMS,
+    canonicalizeUrl,
+    normalizeTimestamp,
+    normalizeText,
+    normalizeArray,
+    normalizeItem,
+    validateStory,
   };
 
   if (typeof module !== "undefined" && module.exports) module.exports = api;

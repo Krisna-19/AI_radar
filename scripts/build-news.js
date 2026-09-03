@@ -37,7 +37,29 @@ async function main() {
   const report = await ingestAll(SRC.enabledSources, { concurrency: CONCURRENCY });
   report.logs.forEach((l) => console.log(l));
 
-  const items = Core.dedupe(report.allItems);
+  // Stage 3: validate every normalized canonical story; log + drop rejections
+  // (never silently). Valid stories proceed to dedupe.
+  const valid = [];
+  const rejected = [];
+  for (const story of report.allItems) {
+    const check = Core.validateStory(story);
+    if (check.valid) {
+      valid.push(story);
+    } else {
+      rejected.push({
+        id: story && story.id,
+        title: story && story.title,
+        source: story && story.source && story.source.id,
+        errors: check.errors.map((e) => e.field + ": " + e.message),
+      });
+      console.log(
+        `[WARN] rejecting story ${story && story.id ? story.id : "?"} (${story && story.source && story.source.id}: ${(story && story.title) || "untitled"}): ` +
+          check.errors.map((e) => e.field + "=" + e.message).join("; ")
+      );
+    }
+  }
+
+  const items = Core.dedupe(valid);
   items.sort(
     (a, b) =>
       (b.score || 0) - (a.score || 0) ||
@@ -50,7 +72,11 @@ async function main() {
     JSON.stringify(
       {
         generatedAt: Date.now(),
-        stats: Object.assign({}, report.summary, { totalMs: Date.now() - started }),
+        stats: Object.assign({}, report.summary, {
+          totalMs: Date.now() - started,
+          normalized: report.allItems.length,
+          rejectedValidated: rejected.length,
+        }),
         sources: report.results.map((r) => ({
           id: r.source.id,
           name: r.source.name,
@@ -67,7 +93,8 @@ async function main() {
   );
 
   console.log(
-    `[INFO] Saved ${items.length} unique items to data/news.json in ${((Date.now() - started) / 1000).toFixed(1)}s`
+    `[INFO] Saved ${items.length} unique items to data/news.json in ${((Date.now() - started) / 1000).toFixed(1)}s` +
+      ` (normalized ${report.allItems.length}, rejected ${rejected.length})`
   );
 
   // Fail loudly when nothing was fetched so the workflow catches problems.

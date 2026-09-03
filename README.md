@@ -51,7 +51,8 @@ sources/sources.json  (canonical config — 13 feeds)
    │  (GitHub Actions: every 3h / on code push; runs npm test first)
    ▼
 scripts/build-news.js ──┴─> scripts/pipeline/ingest.js  (fetch + parse RSS/Atom/RDF)
-                          └─> shared js/shared.js        (enrich → stable IDs → dedupe → score)
+                          └─> shared js/shared.js        (normalizeItem → canonical Story
+                                                           v1.0 → validate → dedupe → score)
    │
    ▼
 data/news.json  (committed to repo; embeds per-source stats)
@@ -72,7 +73,7 @@ AI_radar/
 ├── css/style.css             # Dark "radar" theme
 ├── js/
 │   ├── config.js             # Fetch strategies + paths (Node loads sources)
-│   ├── shared.js             # Pure helpers (browser + Node, single normalize step)
+│   ├── shared.js             # Pure helpers + canonical Story normalizer (browser + Node)
 │   ├── aggregator.js         # Snapshot / cache / live aggregation
 │   └── app.js                # Rendering, filters, search, clock
 ├── sources/
@@ -92,7 +93,7 @@ AI_radar/
 └── .github/workflows/news.yml# 3-hourly snapshot refresh
 ```
 
-Docs: [`ARCHITECTURE.md`](ARCHITECTURE.md) · [`SOURCES.md`](SOURCES.md) · [`SETUP.md`](SETUP.md)
+Docs: [`ARCHITECTURE.md`](ARCHITECTURE.md) · [`SOURCES.md`](SOURCES.md) · [`SETUP.md`](SETUP.md) · [`SCHEMA.md`](SCHEMA.md)
 
 ## 6. Local development
 
@@ -101,7 +102,7 @@ npm install        # only needed for the snapshot builder
 npm start          # serves the site at http://localhost:8080
 npm run build:news # manually regenerate data/news.json from the 13 feeds
 node scripts/pipeline/ingest.js   # dry-run: check every feed, no file writes
-npm test           # 29 unit tests (config validation, parsers, identity keys)
+npm test           # 48 unit tests (schema, config validation, parsers, identity keys)
 ```
 
 See [`SETUP.md`](SETUP.md) for the full guide (env vars, tests, troubleshooting).
