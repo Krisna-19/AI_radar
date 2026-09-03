@@ -17,6 +17,7 @@ const path = require("path");
 const Core = require("../js/shared.js");
 const SRC = require("../sources/index.js");
 const { ingestAll } = require("./pipeline/ingest.js");
+const { clusterStories } = require("./pipeline/dedupe.js");
 
 const SNAPSHOT_FILE = path.join(__dirname, "..", "data", "news.json");
 const CONCURRENCY = 4;
@@ -59,7 +60,9 @@ async function main() {
     }
   }
 
-  const items = Core.dedupe(valid);
+  const deduped = Core.dedupe(valid);
+  const stage4 = clusterStories(deduped);
+  const items = stage4.items;
   items.sort(
     (a, b) =>
       (b.score || 0) - (a.score || 0) ||
@@ -76,6 +79,10 @@ async function main() {
           totalMs: Date.now() - started,
           normalized: report.allItems.length,
           rejectedValidated: rejected.length,
+          afterExactDedupe: stage4.stats.afterExactDedupe,
+          similarityMergedInto: stage4.stats.mergedInto,
+          multiSourceStories: stage4.stats.multiSource,
+          maxClusterSize: stage4.stats.maxClusterSize,
         }),
         sources: report.results.map((r) => ({
           id: r.source.id,
@@ -93,8 +100,10 @@ async function main() {
   );
 
   console.log(
-    `[INFO] Saved ${items.length} unique items to data/news.json in ${((Date.now() - started) / 1000).toFixed(1)}s` +
-      ` (normalized ${report.allItems.length}, rejected ${rejected.length})`
+    `[INFO] Saved ${items.length} unique stories to data/news.json in ${((Date.now() - started) / 1000).toFixed(1)}s` +
+      ` (normalized ${report.allItems.length}, rejected ${rejected.length},` +
+      ` exactDedupe ${stage4.stats.afterExactDedupe}, similarityMergedInto ${stage4.stats.mergedInto},` +
+      ` multiSource ${stage4.stats.multiSource}, maxCluster ${stage4.stats.maxClusterSize})`
   );
 
   // Fail loudly when nothing was fetched so the workflow catches problems.

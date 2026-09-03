@@ -65,8 +65,9 @@ items" of Stage 1/2 with one well-defined shape that later stages can rely on.
 | `countries` | string[] | `[]` |
 | `ai` | object | `{ summary: null, whyItMatters: null, keyTakeaways: [] }` (Stage 7 fills) |
 | `scores` | object | `{ importance, impact, novelty, credibility, relevance, sourceConfidence }` all `null` (Stage 6 fills) |
-| `relatedStoryIds` | string[] | `[]` (Stage 4 fills) |
-| `sources` | string[]/obj[] | `[]` ("Reported by N sources", Stage 4 fills) |
+| `relatedStoryIds` | string[] | `[]` (Stage 4: ids of every story merged into this one, canonical first) |
+| `sources` | string[]/obj[] | `[]` (Stage 4: deduped `{id, name}` of every reporting outlet) |
+| `reportedBy` | number \| undefined | `undefined` for a single-source story; = `sources.length` for a merged cluster |
 | `createdAt` | string | = `discoveredAt` for now |
 | `updatedAt` | string | = `discoveredAt` for now |
 

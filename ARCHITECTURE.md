@@ -4,11 +4,13 @@ This document describes the current architecture of AI RADAR and the target
 architecture we are evolving toward (approved roadmap, Stage 1..10). It is a
 living document: update it whenever a stage lands.
 
-## 1. Current architecture (as of Stage 3)
+## 1. Current architecture (as of Stage 4)
 
 ### Stack
 - 100% static web app (no framework, no build step) served by GitHub Pages
   from the `main` branch root.
+- The snapshot builder is offline and deterministic: no runtime calls, no
+  randomness, no wall-clock dependence (besides `generatedAt`).
 - Frontend scripts: `js/config.js`, `js/shared.js`, `js/aggregator.js`, `js/app.js`.
 - Backend: GitHub Actions (`.github/workflows/news.yml`) runs a Node snapshot
   builder (`scripts/build-news.js`) on top of the unified pipeline and commits
@@ -23,8 +25,8 @@ living document: update it whenever a stage lands.
    │    build-news.js
    │      └─ pipeline: sources/index.js -> ingest.js (fetch+parse)
    │            -> normalizeItem (canonical Story, schemaVersion 1.0)
-   │            -> validateStory -> dedupe
-   │            -> data/news.json {generatedAt, stats, sources, items}
+   │            -> validateStory -> dedupe (exact match)
+   │            -> clusterStories (Stage 4 similarity) -> data/news.json
    │      -> npm test gate -> git commit -> GitHub Pages
    │
    └─ browser (fallback only when the snapshot is missing)
@@ -43,9 +45,46 @@ chips come from sources/sources.json.
   - Unchanged across runs, sources and days -> the foundation for idempotent
     pipeline upserts and cross-run deduplication.
 - `dedupe()` collapses items with an identical `canonicalKey` (first occurrence
-  wins). Stories reported by multiple outlets under (slightly) different URLs
-  are **not** merged yet — that is Stage 4 (similarity clustering +
-  "Reported by N sources").
+  wins). **`clusterStories()` (Stage 4)** additionally merges *near-identical*
+  stories reporting the same event into one canonical Story with `sources` and
+  `reportedBy` populated — see Stage 4 section below.
+
+### Similarity clustering / "Reported by N sources" (Stage 4)
+- `scripts/pipeline/dedupe.js` (Node-only, zero dependencies) runs right after
+  the exact-match `dedupe()` in `build-news.js`. It is **fully deterministic**:
+  identical input always yields identical output, so Stage 1 ids remain stable.
+- **Multi-signal similarity** (all must pass to merge):
+  1. **Token overlap**: a high *symmetric* Jaccard (≥ 0.70) between **core
+     content tokens**.
+  2. **Time proximity**: if *both* members carry a `publishedAt`, they must be
+     within 72h of each other; otherwise the same headline on different days is
+     treated as two events.
+  3. Same-host bonus (0.08) — an outlet re-reporting its own headline — nudges
+     the score but can never cross the bar on its own.
+- **Low-information vocabulary**: announcement/reporting verbs + filler
+  adjectives ("releases", "announces", "launches", "unveils", "new", "latest",
+  "unlocks", "breakthrough", …) are dropped before overlap is measured, because
+  these are exactly the words outlets vary when covering the *same* event.
+  Content nouns, model versions and numbers are **never** dropped.
+- **False-positive protection** (the priority): a high symmetric bar means two
+  different stories about the same company — "OpenAI launches GPT-6" vs "OpenAI
+  raises $10B" — or the same model in different contexts ("releases GPT-6" vs
+  "GPT-6 wins a benchmark") keep their distinguishing content token and stay
+  separate. The implementation **prefers false negatives**: when a merge is
+  ambiguous, stories are left separate.
+- **Efficiency (no blind O(n²))**: stories are bucketed by shared meaningful
+  title token (a deterministic `Map`), and similarity is only checked *within*
+  each bucket, with a union-find used to form clusters. This keeps the ~4M
+  pairwise comparisons of a naive build off the table for ~2.8k-item snapshots.
+- **Canonical selection** is deterministic: within a merged cluster the ranking
+  is `reliability` desc, then earliest `publishedAt`, then longest title, then a
+  stable id tiebreak. The winner keeps its identity (`fingerprint`/`id`/
+  `canonicalUrl`) and the other members are preserved:
+  - `sources` = deduped list of every reporting outlet `{id, name}`
+  - `relatedStoryIds` = ids of every merged member (canonical id first)
+  - `reportedBy` = number of distinct reporting sources
+- `stats` expose verification numbers: `afterExactDedupe`,
+  `similarityMergedInto`, `multiSourceStories`, `maxClusterSize`.
 
 ### Empty/zero-state handling (Stage 1)
 - "Today" with no published stories (e.g. early in the day) no longer shows a
@@ -108,11 +147,13 @@ chips come from sources/sources.json.
   so existing filters, search, date grouping, source display and tests remain
   intact — **no frontend redesign** in Stage 3.
 
-### Testing (Stage 1 + Stage 2 + Stage 3)
+### Testing (Stage 1 + Stage 2 + Stage 3 + Stage 4)
 - Node built-in test runner, zero extra dependencies: `npm test`
-  (`node --test tests/*.test.js`), **48 tests** (Stage 1 identity/empty-state +
+  (`node --test tests/*.test.js`), **65 tests** (Stage 1 identity/empty-state +
   Stage 2 config/parser/pipeline + Stage 3 canonical schema incl. RSS/Atom/RDF,
-  URL tracking, timestamps, stable ids, validation, multi-source).
+  URL tracking, timestamps, stable ids, validation, multi-source + Stage 4
+  similarity clustering / false-positive guards / source aggregation /
+  determinism / ordering independence / bounds).
 - Run in CI before the snapshot is regenerated, and on every relevant code push.
 - Browser-level smoke checks are run locally (jsdom harness) before pushing.
 - Snapshot verification runs at build time: every generated story is validated
@@ -121,18 +162,19 @@ chips come from sources/sources.json.
 ## 2. Current limitations (drivers for the roadmap)
 - Snapshot is **replaced, never appended** -> no history, no cross-day
   dedup, weak search ("This week"/"Yesterday" are often empty).
-- Deduplication is title+URL exact-match only (no similarity clustering) —
-  `relatedStoryIds`/`sources` exist in the schema but stay empty (Stage 4).
+- Similarity clustering is intentionally **conservative** (prefers false
+  negatives). Deep paraphrases that share few core content tokens are left
+  separate even when a human would call them the same event; a broader
+  classifier/LLM could recover them in a later stage.
 - Categories are keyword heuristics; `scores.*` components and entities stay
   `null`/`[]` (radar Score is Stage 6, entities/classify Stage 6).
 - No summaries, no AI interpretation layer (`ai.*` null — Stage 7).
 - The browser live fallback still parses feeds with DOMParser instead of the
   Node `feed.js` path — same source config + same canonical normalizer, two XML
-  parsers.
+  parsers. It also only runs the Stage 1 exact dedupe (no similarity clustering
+  in the browser — that is a Node-pipeline concern).
 - High-volume feeds (OpenAI, Hugging Face) emit > 1,000 items each, so the
   snapshot can grow large between refreshes.
-- No detailed docs for Stage 4+ (dedupe/classify/score/store land in the
-  roadmap; the canonical Story schema is documented in [SCHEMA.md](SCHEMA.md)).
 
 ## 3. Target architecture (approved roadmap)
 
@@ -179,7 +221,7 @@ CONFIG / SECRETS / TESTS / DOCS
 1. ~~Fix empty/zero states + stable identity keys~~ **done**
 2. ~~`sources/` modular config + unified `ingest.js` parser + reliability stats~~ **done**
 3. ~~`normalize.js` canonical Story schema~~ **done** (implemented in `js/shared.js`, see SCHEMA.md)
-4. `dedupe.js` similarity clustering -> "Reported by N sources"
+4. ~~`dedupe.js` similarity clustering -> "Reported by N sources"~~ **done** (implemented in `scripts/pipeline/dedupe.js`)
 5. Persistence: `store.js` per-day NDJSON + index, idempotent upserts, CI writes
 6. `classify.js` (12 categories) + entities + transparent `score.js` Radar Score
 7. `summarize.js` extractive + optional LLM path
@@ -192,7 +234,7 @@ CONFIG / SECRETS / TESTS / DOCS
   proxy for live fallback debugging).
 - Regenerate the snapshot: `npm run build:news`.
 - Check feeds without writing files: `node scripts/pipeline/ingest.js`.
-- Tests: `npm test` (48 tests).
+- Tests: `npm test` (65 tests).
 - Push triggers the CI pipeline (tests + fresh snapshot + Pages deploy).
 - Full local setup + troubleshooting: [SETUP.md](SETUP.md);
   source catalog/how-to-add: [SOURCES.md](SOURCES.md);

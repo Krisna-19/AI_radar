@@ -52,7 +52,9 @@ sources/sources.json  (canonical config — 13 feeds)
    ▼
 scripts/build-news.js ──┴─> scripts/pipeline/ingest.js  (fetch + parse RSS/Atom/RDF)
                           └─> shared js/shared.js        (normalizeItem → canonical Story
-                                                           v1.0 → validate → dedupe → score)
+                                                           v1.0 → validate → exact dedupe)
+                          └─> scripts/pipeline/dedupe.js (Stage 4: conservative similarity
+                                                           clustering → "Reported by N sources")
    │
    ▼
 data/news.json  (committed to repo; embeds per-source stats)
@@ -102,7 +104,7 @@ npm install        # only needed for the snapshot builder
 npm start          # serves the site at http://localhost:8080
 npm run build:news # manually regenerate data/news.json from the 13 feeds
 node scripts/pipeline/ingest.js   # dry-run: check every feed, no file writes
-npm test           # 48 unit tests (schema, config validation, parsers, identity keys)
+npm test           # 65 unit tests (schema, config validation, parsers, identity keys, dedupe)
 ```
 
 See [`SETUP.md`](SETUP.md) for the full guide (env vars, tests, troubleshooting).
