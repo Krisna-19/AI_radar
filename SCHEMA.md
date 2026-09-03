@@ -198,5 +198,9 @@ the snapshot under `stats.rejectedValidated`.
   Stage 2 code/tests and the browser aggregator keep their call shape.
 - **Pipeline**: `scripts/pipeline/ingest.js` parses feeds and normalizes via
   `normalizeItem`; `scripts/build-news.js` validates every story, logs
-  rejections, dedupes, and writes `data/news.json`.
-- **Tests**: `tests/schema.test.js` (Stage 3) + existing Stage 1/2 suites.
+  rejections, dedupes, writes `data/news.json`, and persists a copy of each
+  staged story via `scripts/pipeline/store.js` into `data/db/` (per-day NDJSON +
+  `index.json`, idempotent upsert by `id`, 90-day retention). The store keeps
+  `createdAt`/`updatedAt` as wall-clock metadata; `id` is the stable primary key.
+- **Tests**: `tests/schema.test.js` (Stage 3) + `tests/store.test.js` (Stage 5)
+  + existing Stage 1/2/4 suites.

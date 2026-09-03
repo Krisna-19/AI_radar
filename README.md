@@ -55,9 +55,11 @@ scripts/build-news.js ──┴─> scripts/pipeline/ingest.js  (fetch + parse R
                                                            v1.0 → validate → exact dedupe)
                           └─> scripts/pipeline/dedupe.js (Stage 4: conservative similarity
                                                            clustering → "Reported by N sources")
+                          └─> scripts/pipeline/store.js  (Stage 5: idempotent history in
+                                                           data/db, 90-day retention)
    │
    ▼
-data/news.json  (committed to repo; embeds per-source stats)
+data/news.json  (committed live snapshot)  +  data/db/  (persistent archive)
    │  (static file, same origin — no CORS, no proxies)
    ▼
 Browser (js/aggregator.js)  ── reads snapshot + sources/sources.json → js/app.js renders
@@ -87,8 +89,12 @@ AI_radar/
 │       ├── env.js            # Minimal .env loader (zero-dep)
 │       ├── http.js           # Classified timeout/http/network/empty fetch
 │       ├── feed.js           # RSS 2.0 / Atom / RSS 1.0-RDF parser
-│       └── ingest.js         # Unified ingestion (dry-run CLI too)
-├── data/news.json            # Committed snapshot (auto-refreshed)
+│       ├── ingest.js         # Unified ingestion (dry-run CLI too)
+│       ├── dedupe.js         # Stage 4 similarity clustering
+│       └── store.js          # Stage 5 persistence (data/db, 90-day retention)
+├── data/
+│   ├── news.json             # Committed live snapshot (auto-refreshed)
+│   └── db/                   # Persistent archive (days/*.ndjson, index.json, runs/)
 ├── server.js                 # Local static server + RSS proxy (zero-dep)
 ├── package.json
 ├── .env.example              # Local env template (copy to .env)
@@ -104,7 +110,7 @@ npm install        # only needed for the snapshot builder
 npm start          # serves the site at http://localhost:8080
 npm run build:news # manually regenerate data/news.json from the 13 feeds
 node scripts/pipeline/ingest.js   # dry-run: check every feed, no file writes
-npm test           # 65 unit tests (schema, config validation, parsers, identity keys, dedupe)
+npm test           # 76 unit tests (schema, config validation, parsers, identity keys, dedupe, store)
 ```
 
 See [`SETUP.md`](SETUP.md) for the full guide (env vars, tests, troubleshooting).

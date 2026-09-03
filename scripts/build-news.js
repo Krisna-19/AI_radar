@@ -18,6 +18,7 @@ const Core = require("../js/shared.js");
 const SRC = require("../sources/index.js");
 const { ingestAll } = require("./pipeline/ingest.js");
 const { clusterStories } = require("./pipeline/dedupe.js");
+const Store = require("./pipeline/store.js");
 
 const SNAPSHOT_FILE = path.join(__dirname, "..", "data", "news.json");
 const CONCURRENCY = 4;
@@ -63,6 +64,27 @@ async function main() {
   const deduped = Core.dedupe(valid);
   const stage4 = clusterStories(deduped);
   const items = stage4.items;
+
+  // Stage 5: persist the staged (deduplicated + clustered) stories into
+  // data/db (per-day NDJSON + index + run log), then enforce the retention
+  // window. This is additive - data/news.json below is written unchanged and
+  // remains the live snapshot the current frontend reads.
+  const runStartedAt = new Date(started).toISOString();
+  const stored = Store.upsertStories(items);
+  const pruned = Store.prune(Store.DEFAULT_DB_DIR, { retentionDays: Store.DEFAULT_RETENTION_DAYS });
+  const runId = Store.runLog(Store.DEFAULT_DB_DIR, {
+    startedAt: runStartedAt,
+    normalized: report.allItems.length,
+    afterExactDedupe: stage4.stats.afterExactDedupe,
+    similarityMergedInto: stage4.stats.mergedInto,
+    stored: stored.total,
+    storedDays: stored.days,
+    upserted: stored.upserted,
+    updated: stored.updated,
+    unchanged: stored.unchanged,
+    prunedDays: pruned.prunedDays.length,
+    prunedStories: pruned.prunedStories,
+  });
   items.sort(
     (a, b) =>
       (b.score || 0) - (a.score || 0) ||
@@ -83,6 +105,10 @@ async function main() {
           similarityMergedInto: stage4.stats.mergedInto,
           multiSourceStories: stage4.stats.multiSource,
           maxClusterSize: stage4.stats.maxClusterSize,
+          storeRunId: runId,
+          storedDays: stored.days,
+          storedStories: stored.total,
+          prunedDays: pruned.prunedDays.length,
         }),
         sources: report.results.map((r) => ({
           id: r.source.id,
@@ -103,7 +129,8 @@ async function main() {
     `[INFO] Saved ${items.length} unique stories to data/news.json in ${((Date.now() - started) / 1000).toFixed(1)}s` +
       ` (normalized ${report.allItems.length}, rejected ${rejected.length},` +
       ` exactDedupe ${stage4.stats.afterExactDedupe}, similarityMergedInto ${stage4.stats.mergedInto},` +
-      ` multiSource ${stage4.stats.multiSource}, maxCluster ${stage4.stats.maxClusterSize})`
+      ` multiSource ${stage4.stats.multiSource}, maxCluster ${stage4.stats.maxClusterSize},` +
+      ` storeDays ${stored.days}, stored ${stored.total}, prunedDays ${pruned.prunedDays.length})`
   );
 
   // Fail loudly when nothing was fetched so the workflow catches problems.

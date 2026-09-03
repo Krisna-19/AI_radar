@@ -4,7 +4,7 @@ This document describes the current architecture of AI RADAR and the target
 architecture we are evolving toward (approved roadmap, Stage 1..10). It is a
 living document: update it whenever a stage lands.
 
-## 1. Current architecture (as of Stage 4)
+## 1. Current architecture (as of Stage 5)
 
 ### Stack
 - 100% static web app (no framework, no build step) served by GitHub Pages
@@ -26,7 +26,9 @@ living document: update it whenever a stage lands.
    │      └─ pipeline: sources/index.js -> ingest.js (fetch+parse)
    │            -> normalizeItem (canonical Story, schemaVersion 1.0)
    │            -> validateStory -> dedupe (exact match)
-   │            -> clusterStories (Stage 4 similarity) -> data/news.json
+   │            -> clusterStories (Stage 4 similarity)
+   │            -> store.upsertStories -> store.prune (Stage 5, data/db/, 90-day)
+   │            -> data/news.json (live snapshot)
    │      -> npm test gate -> git commit -> GitHub Pages
    │
    └─ browser (fallback only when the snapshot is missing)
@@ -34,7 +36,8 @@ living document: update it whenever a stage lands.
         -> parse -> normalizeItem -> dedupe -> render
 Frontend reads data/news.json (it ignores stats/sources fields), renders Today /
 Yesterday / This week, search, category + source filters, Top Stories. Source
-chips come from sources/sources.json.
+chips come from sources/sources.json. data/db/ is written by the Node pipeline
+(history + cross-day archive for later stages) and served as static files.
 ```
 
 ### Identity model (Stage 1)
@@ -85,6 +88,36 @@ chips come from sources/sources.json.
   - `reportedBy` = number of distinct reporting sources
 - `stats` expose verification numbers: `afterExactDedupe`,
   `similarityMergedInto`, `multiSourceStories`, `maxClusterSize`.
+
+### Persistence / "GitHub repo == database" (Stage 5)
+- `scripts/pipeline/store.js` (Node-only, zero dependencies, only built-ins)
+  archives every staged run into **`data/db/`**:
+  ```
+  data/db/
+    runs/<runId>.json         one per pipeline run (metadata/run log)
+    index.json                format, updatedAt, day -> ids, id -> {day, source}
+    days/<yyyy-mm-dd>.ndjson  one canonical Story (JSON) per line
+  ```
+- **Idempotent upsert**: each story is keyed by its stable Stage-1 `id`. Re-running
+  the same (or older) data is a no-op — an incoming record with `updatedAt <=`
+  the stored one is left as-is, so a day bucket never grows and content never
+  churns across identical runs. `createdAt`/`updatedAt` remain wall-clock
+  metadata and are deliberately excluded from the idempotency key.
+- **Day bucketing**: a story files under the UTC day of `publishedAt`, falling
+  back to `discoveredAt` when `publishedAt` is null (already normalized; dates
+  are never invented).
+- **Retention**: `prune()` enforces a **90-day window** (configurable via
+  `retentionDays`), removing expired `days/*.ndjson` and their `index.json`
+  entries. The pipeline run log is kept separately under `runs/`.
+- **Deterministic & lossless**: identical input ⇒ identical stored content
+  (day rows sorted by id); the complete canonical Story is persisted verbatim.
+  A malformed NDJSON line is skipped and reported, never fatal.
+- **APIs for later stages** (tested now): `readDay(dbDir, day)`,
+  `readById(dbDir, id)`, `recent(dbDir, { limit })`, `stats(dbDir)`, plus
+  `upsertStories`, `prune`, `runLog`. This is the **swap boundary**: moving to
+  Supabase/D1 later requires rewriting only `store.js`.
+- `data/news.json` is still the live snapshot the current frontend reads —
+  Stage 5 is additive. The Stage 8 dashboard will read `data/db/*` instead.
 
 ### Empty/zero-state handling (Stage 1)
 - "Today" with no published stories (e.g. early in the day) no longer shows a
@@ -147,25 +180,29 @@ chips come from sources/sources.json.
   so existing filters, search, date grouping, source display and tests remain
   intact — **no frontend redesign** in Stage 3.
 
-### Testing (Stage 1 + Stage 2 + Stage 3 + Stage 4)
+### Testing (Stage 1 + Stage 2 + Stage 3 + Stage 4 + Stage 5)
 - Node built-in test runner, zero extra dependencies: `npm test`
-  (`node --test tests/*.test.js`), **65 tests** (Stage 1 identity/empty-state +
+  (`node --test tests/*.test.js`), **76 tests** (Stage 1 identity/empty-state +
   Stage 2 config/parser/pipeline + Stage 3 canonical schema incl. RSS/Atom/RDF,
   URL tracking, timestamps, stable ids, validation, multi-source + Stage 4
   similarity clustering / false-positive guards / source aggregation /
-  determinism / ordering independence / bounds).
+  determinism / ordering independence / bounds + Stage 5 persistent store /
+  idempotency / day bucketing / read APIs / retention / run logs / determinism /
+  malformed-data handling / empty-input).
 - Run in CI before the snapshot is regenerated, and on every relevant code push.
 - Browser-level smoke checks are run locally (jsdom harness) before pushing.
 - Snapshot verification runs at build time: every generated story is validated
   against the schema and the counts are reported.
 
 ## 2. Current limitations (drivers for the roadmap)
-- Snapshot is **replaced, never appended** -> no history, no cross-day
-  dedup, weak search ("This week"/"Yesterday" are often empty).
 - Similarity clustering is intentionally **conservative** (prefers false
   negatives). Deep paraphrases that share few core content tokens are left
   separate even when a human would call them the same event; a broader
   classifier/LLM could recover them in a later stage.
+- History is stored in `data/db` with a **90-day retention** and grows with each
+  run, but the current live frontend still reads only `data/news.json` — the
+  dashboard changes to read history come in Stage 8, and cross-day search in
+  Stage 9.
 - Categories are keyword heuristics; `scores.*` components and entities stay
   `null`/`[]` (radar Score is Stage 6, entities/classify Stage 6).
 - No summaries, no AI interpretation layer (`ai.*` null — Stage 7).
@@ -222,7 +259,7 @@ CONFIG / SECRETS / TESTS / DOCS
 2. ~~`sources/` modular config + unified `ingest.js` parser + reliability stats~~ **done**
 3. ~~`normalize.js` canonical Story schema~~ **done** (implemented in `js/shared.js`, see SCHEMA.md)
 4. ~~`dedupe.js` similarity clustering -> "Reported by N sources"~~ **done** (implemented in `scripts/pipeline/dedupe.js`)
-5. Persistence: `store.js` per-day NDJSON + index, idempotent upserts, CI writes
+5. ~~`store.js` persistence -> per-day NDJSON + index, idempotent upserts, CI writes~~ **done** (implemented in `scripts/pipeline/store.js`, `data/db/`, 90-day retention)
 6. `classify.js` (12 categories) + entities + transparent `score.js` Radar Score
 7. `summarize.js` extractive + optional LLM path
 8. Dashboard rebuild (Top Stories w/ score, stats, trends, detail modal)
@@ -234,7 +271,7 @@ CONFIG / SECRETS / TESTS / DOCS
   proxy for live fallback debugging).
 - Regenerate the snapshot: `npm run build:news`.
 - Check feeds without writing files: `node scripts/pipeline/ingest.js`.
-- Tests: `npm test` (65 tests).
+- Tests: `npm test` (76 tests).
 - Push triggers the CI pipeline (tests + fresh snapshot + Pages deploy).
 - Full local setup + troubleshooting: [SETUP.md](SETUP.md);
   source catalog/how-to-add: [SOURCES.md](SOURCES.md);
