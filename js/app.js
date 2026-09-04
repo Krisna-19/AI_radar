@@ -17,6 +17,7 @@
     refresh: document.getElementById("refresh-btn"),
     rangeTabs: document.getElementById("range-tabs"),
     grid: document.getElementById("news-grid"),
+    gridMore: document.getElementById("grid-more"),
     topStories: document.getElementById("top-stories"),
     loading: document.getElementById("loading"),
     error: document.getElementById("error"),
@@ -32,6 +33,9 @@
     search: "",
     sources: new Set(),
     fromCache: false,
+    page: 1,
+    pageSize: 48,
+    group: false,
   };
 
   /* ---------------- Sample fallback data ---------------- */
@@ -292,8 +296,15 @@
       .join("")
       .toUpperCase();
 
+    const dashHtml =
+      window.AIRadarDashboard && typeof window.AIRadarDashboard.cardEnhancement === "function"
+        ? window.AIRadarDashboard.cardEnhancement(item)
+        : "";
+
     return (
-      '<article class="card" data-cat="' +
+      '<article class="card dash-enhanced' +
+      (window.AIRadarDashboard ? "" : " dash-off") +
+      '" data-cat="' +
       item.category +
       '" data-src="' +
       escapeHtml(item.sourceId) +
@@ -328,6 +339,7 @@
       escapeHtml(item.link && item.link !== "#" ? domainFromLink(item.link) : "Sample") +
       ' →</span>' +
       "</div>" +
+      dashHtml +
       "</div>" +
       (item.link && item.link !== "#"
         ? "<a class=\"card-link\" href=\"" + escapeHtml(item.link) + "\" target=\"_blank\" rel=\"noopener noreferrer\" aria-label=\"Read article\"></a>"
@@ -464,8 +476,20 @@
         ? []
         : [...ranged].sort((a, b) => (b.score || 0) - (a.score || 0));
       renderTopStories(top);
+      if (
+        window.AIRadarDashboard &&
+        typeof window.AIRadarDashboard.renderTopSignal === "function"
+      ) {
+        window.AIRadarDashboard.renderTopSignal(top);
+      }
     } else {
       els.topStories.innerHTML = "";
+      if (
+        window.AIRadarDashboard &&
+        typeof window.AIRadarDashboard.renderTopSignal === "function"
+      ) {
+        window.AIRadarDashboard.renderTopSignal([]);
+      }
     }
 
     renderNotice(
@@ -476,12 +500,55 @@
         : ""
     );
 
-    els.grid.innerHTML = showItems.length
-      ? showItems.map(cardHtml).join("")
-      : "";
+    renderGridLayout(showItems);
+  }
+
+  /* Render the feed grid. Capped to a virtual page (see state.page/pageSize)
+   * so 2.6k+ story snapshots stay responsive, then a "Load more" control when
+   * more pages remain. Optionally groups by subcategory when toggled on. */
+  function renderGridLayout(showItems) {
+    const D = window.AIRadarDashboard;
+    const cap = state.page * state.pageSize;
+    const slice = showItems.slice(0, cap);
+    const hasMore = showItems.length > cap;
+
+    let html = "";
+    if (state.group && D && typeof D.groupBySubcategory === "function") {
+      const groups = D.groupBySubcategory(slice);
+      for (const g of groups) {
+        html +=
+          '<div class="subcat-block">' +
+          '<h3 class="subcat-title">' +
+          escapeHtml(g.label) +
+          ' <span class="subcat-count">' +
+          g.count +
+          "</span></h3>" +
+          g.items.map(cardHtml).join("") +
+          "</div>";
+      }
+    } else {
+      html += slice.map(cardHtml).join("");
+    }
+
+    els.grid.innerHTML = html;
+
+    if (els.gridMore) {
+      if (hasMore) {
+        els.gridMore.style.display = "block";
+        els.gridMore.innerHTML =
+          '<button type="button" class="btn-more">Show more (' +
+          (showItems.length - cap) +
+          " more)</button>";
+      } else {
+        els.gridMore.style.display = "none";
+        els.gridMore.innerHTML = "";
+      }
+    }
+
     els.empty.style.display = showItems.length ? "none" : "block";
     if (!showItems.length) els.empty.innerHTML = emptyMessage();
   }
+
 
   function renderStats() {
     const { today, total } = AIRadar.statsFor(state.items);
@@ -512,6 +579,7 @@
       const chip = e.target.closest(".filter-chip");
       if (!chip) return;
       state.category = chip.dataset.cat;
+      state.page = 1;
       renderChips();
       renderAll();
     });
@@ -520,6 +588,7 @@
       const chip = e.target.closest(".range-chip");
       if (!chip) return;
       state.range = chip.dataset.range;
+      state.page = 1;
       renderRangeTabs();
       renderStats();
       renderAll();
@@ -532,14 +601,33 @@
       if (src === "all") state.sources = new Set();
       else if (state.sources.has(src)) state.sources.delete(src);
       else state.sources.add(src);
+      state.page = 1;
       renderSourceBar();
       renderAll();
     });
 
     els.search.addEventListener("input", (e) => {
       state.search = e.target.value.trim();
+      state.page = 1;
       renderAll();
     });
+
+    if (els.gridMore) {
+      els.gridMore.addEventListener("click", (e) => {
+        if (!e.target.closest(".btn-more")) return;
+        state.page += 1;
+        renderAll();
+      });
+    }
+
+    const groupToggle = document.getElementById("group-toggle");
+    if (groupToggle) {
+      groupToggle.addEventListener("change", (e) => {
+        state.group = e.target.checked;
+        state.page = 1;
+        renderAll();
+      });
+    }
 
     els.refresh.addEventListener("click", () => {
       state.refresh = true;
@@ -588,6 +676,25 @@
     } finally {
       setLoading(false);
     }
+  }
+
+  /* Expose a small contract for the dashboard layer: read current filter state
+   * and/or jump the search box to a token (e.g. when an entity/tag chip is
+   * clicked). Falls back gracefully if the dashboard layer is absent. */
+  window.AIRadarHooks = {
+    getState: function () {
+      return state;
+    },
+    setSearch: function (token) {
+      if (els.search) els.search.value = token || "";
+      state.search = (token || "").trim();
+      state.page = 1;
+      renderAll();
+    },
+  };
+
+  if (window.AIRadarDashboard && typeof window.AIRadarDashboard.attach === "function") {
+    window.AIRadarDashboard.attach();
   }
 
   renderSourceBar();

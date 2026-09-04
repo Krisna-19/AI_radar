@@ -1,0 +1,194 @@
+/* ============ AI RADAR — Stage 8 dashboard enhancements ============
+ * Additive styles only. Reuses :root variables from style.css and defines
+ * nothing that would override the classic feed. If this stylesheet fails to
+ * load, the classic page still renders correctly. */
+
+/* ---------- top signal hero ---------- */
+.top-signal {
+  margin: -14px 0 24px;
+}
+.signal-card {
+  position: relative;
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.12), rgba(99, 102, 241, 0.1));
+  border: 1px solid rgba(14, 165, 233, 0.35);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  display: grid;
+  gap: 8px;
+}
+.signal-tag {
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.signal-link {
+  color: var(--text);
+  font-size: 1.12rem;
+  font-weight: 700;
+  line-height: 1.35;
+  text-decoration: none;
+}
+.signal-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* ---------- per-card radar do not ------- */
+.dash-radar-row {
+  display: flex;
+  justify-content: flex-end;
+}
+.radar {
+  flex-shrink: 0;
+}
+.radar-track {
+  stroke: var(--border);
+  stroke-width: 4;
+}
+.radar-val {
+  filter: drop-shadow(0 0 6px rgba(14, 165, 233, 0.35));
+}
+.radar-num {
+  font-size: 10px;
+  font-weight: 800;
+}
+
+/* ---------- AI summary reveal ---------- */
+.ai-summary {
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+}
+.ai-summary summary {
+  list-style: none;
+  cursor: pointer;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0 2px;
+  user-select: none;
+}
+.ai-summary summary::-webkit-details-marker {
+  display: none;
+}
+.ai-summary summary::after {
+  content: "▾";
+  font-size: 0.7rem;
+  transition: transform 0.15s ease;
+}
+.ai-summary[open] summary::after {
+  transform: rotate(180deg);
+}
+.ai-badge {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #fff;
+  font-size: 0.6rem;
+  font-weight: 800;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+.ai-summary p {
+  color: var(--text);
+  font-size: 0.84rem;
+  line-height: 1.55;
+  padding: 4px 0 10px;
+}
+
+/* ---------- entity / tag chips ---------- */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 4px;
+}
+.entity-chip {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.entity-chip:hover,
+.entity-chip:focus {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+/* ---------- subcategory grouping ---------- */
+.subcat-block {
+  margin-bottom: 26px;
+}
+.subcat-title {
+  font-size: 0.92rem;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  margin: 0 0 12px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+.subcat-count {
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.subcat-block .grid {
+  padding-bottom: 0;
+}
+
+/* ---------- group toggle + load more ---------- */
+.group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 2px;
+}
+.group-toggle input {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.grid-more {
+  text-align: center;
+  padding: 18px 0 4px;
+}
+.btn-more {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 9px 22px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+.btn-more:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ---------- responsive ---------- */
+@media (max-width: 520px) {
+  .signal-link {
+    font-size: 1rem;
+  }
+  .top-signal {
+    margin-top: -6px;
+  }
+}
