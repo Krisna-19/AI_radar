@@ -38,6 +38,10 @@ jobs:
 
       - name: Generate news snapshot
         run: node scripts/build-news.js
+        env:
+          # Optional: enables the LLM summarization path. Without this secret the
+          # pipeline falls back to the deterministic extractive summarizer.
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
 
       - name: Commit snapshot
         run: |

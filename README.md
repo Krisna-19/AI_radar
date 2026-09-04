@@ -17,6 +17,7 @@ AI RADAR is a **self-hosted daily AI-news aggregator**. Every few hours it fetch
 | **Daily digest** | "Top stories today" — top 3 ranked by recency × source weight |
 | **Date ranges** | Tabs for *Today*, *Yesterday*, *This week* |
 | **Categories** | Research 🧠 · Products 🚀 · Funding 💰 · Policy ⚖️ · News 📰 (auto-classified) |
+| **Summaries** | Extractive AI summary + key takeaways per story (no fabrication); optional LLM enrichment opt-in |
 | **Source filters** | Toggle any of the 13 sources on/off |
 | **Search** | Live keyword search across titles & descriptions |
 | **Auto refresh** | GitHub Actions re-aggregates every **3 hours** |
@@ -59,6 +60,8 @@ scripts/build-news.js ──┴─> scripts/pipeline/ingest.js  (fetch + parse R
                                                            entities, tags)
                           └─> scripts/pipeline/score.js   (Stage 6: explainable 0-100 Radar
                                                            Score with stored components)
+                          └─> scripts/pipeline/summarize.js (Stage 7: extractive summary +
+                                                           key takeaways; optional labeled LLM)
                           └─> scripts/pipeline/store.js  (Stage 5: idempotent history in
                                                            data/db, 90-day retention)
    │
@@ -97,6 +100,7 @@ AI_radar/
 │       ├── dedupe.js         # Stage 4 similarity clustering
 │       ├── classify.js       # Stage 6 12-category taxonomy + entities + tags
 │       ├── score.js          # Stage 6 explainable 0-100 Radar Score
+│       ├── summarize.js      # Stage 7 extractive summary + optional LLM path
 │       └── store.js          # Stage 5 persistence (data/db, 90-day retention)
 ├── data/
 │   ├── news.json             # Committed live snapshot (auto-refreshed)
@@ -116,7 +120,7 @@ npm install        # only needed for the snapshot builder
 npm start          # serves the site at http://localhost:8080
 npm run build:news # manually regenerate data/news.json from the 13 feeds
 node scripts/pipeline/ingest.js   # dry-run: check every feed, no file writes
-npm test           # 98 unit tests (schema, config, parsers, identity, dedupe, classify, score, store)
+npm test           # 116 unit tests (schema, config, parsers, identity, dedupe, classify, score, summarize, store)
 ```
 
 See [`SETUP.md`](SETUP.md) for the full guide (env vars, tests, troubleshooting).

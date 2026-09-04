@@ -41,10 +41,16 @@ copy .env.example .env     # Windows
 See [`.env.example`](.env.example). Secrets are **never committed** (`.gitignore`
 covers `.env`); CI uses GitHub Action secrets instead.
 
+Stage 7 summarization is **extractive by default** (no config needed). To enable
+the **optional LLM path**, set `SUMMARY_MODE=llm` plus `AI_API_KEY` (and
+optionally `AI_MODEL`/`AI_BASE_URL`). It uses Node's built-in `fetch` (no extra
+dependency) and falls back to extraction on any failure. In CI, provide
+`AI_API_KEY` as an encrypted Action secret.
+
 ## 4. Tests
 
 ```bash
-npm test           # node --test tests/*.test.js  (expect 98/98)
+npm test           # node --test tests/*.test.js  (expect 116/116)
 ```
 
 Covers Stage 1 (identity keys, empty states), Stage 2 (source config validation,
@@ -52,11 +58,14 @@ RSS/Atom/RSS-1.0 parsing, graceful feed failure handling, line formatting),
 Stage 3 (canonical Story schema: RSS/Atom/RDF normalization, URL tracking params,
 timestamp normalization, stable ids, schema validation, multi-source),
 Stage 5 (persistent store: idempotent upsert, day bucketing, read APIs,
-retention/prune, run logs, determinism, malformed-data handling, empty input) and
+retention/prune, run logs, determinism, malformed-data handling, empty input),
 Stage 6 (classification: 12-category taxonomy, legacy top-5 bucket mapping,
 entity extraction with false-positive + prefix-subsumption guards, tags,
 determinism; Radar Score: weight blend, component monotonicity, multi-source
-bonus, 0-100 range, legacy 0-5 alias).
+bonus, 0-100 range, legacy 0-5 alias) and Stage 7 (summarization: extractive
+determinism, title-only/short-input handling, sentence boundaries, takeaway +
+length limits, idempotency, provenance label, anti-hallucination, LLM success /
+malformed / failure + extractive fallback).
 Tests are also run in CI on every code push before the snapshot is regenerated.
 
 ## 5. Rebuild the news snapshot
@@ -71,13 +80,16 @@ and normalizes every item into a **canonical Story** (`js/shared.js`
 story** and logs + drops any that fail validation (never silently), then dedupes,
 similarity-clusters (Stage 4), **classifies** (Stage 6: 12-category `subcategory`,
 entities, `tags`, a refined legacy top-5 `category`) and **scores** (Stage 6:
-explainable 0-100 `radarScore` with stored components), **persists a copy of each
-staged story into `data/db/`** (per-day NDJSON + `index.json`, idempotent, with a
-90-day retention prune), and writes `data/news.json`. It **aborts with exit code
-1** if the source config is invalid or zero items survive. The final line reports
-normalized vs rejected counts plus Stage 4-6 numbers (e.g. `Saved 2689 unique
-stories … (normalized 2694, rejected 0, exactDedupe 2694, similarityMergedInto 5,
-… storeDays 7, stored 2689, prunedDays 0, classifyCats 12, radar 0-100 mean 57)`).
+explainable 0-100 `radarScore` with stored components), **summarizes** (Stage 7:
+extractive `ai.summary` + `ai.keyTakeaways`, with an optional labeled LLM path),
+**persists a copy of each staged story into `data/db/`** (per-day NDJSON +
+`index.json`, idempotent, with a 90-day retention prune), and writes
+`data/news.json`. It **aborts with exit code 1** if the source config is invalid
+or zero items survive. The final line reports normalized vs rejected counts plus
+Stage 4-7 numbers (e.g. `Saved 2689 unique stories … (normalized 2694, rejected
+0, exactDedupe 2694, similarityMergedInto 5, … storeDays 7, stored 2689,
+prunedDays 0, classifyCats 12, radar 0-100 mean 57, summarize extract
+(1234 of 2689))`).
 
 To check feeds without writing any file (diagnostic dry run):
 

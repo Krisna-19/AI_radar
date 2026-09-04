@@ -27,6 +27,8 @@ living document: update it whenever a stage lands.
    │            -> normalizeItem (canonical Story, schemaVersion 1.0)
    │            -> validateStory -> dedupe (exact match)
    │            -> clusterStories (Stage 4 similarity)
+   │            -> classify (`subcategory`/entities) -> score (Stage 6)
+   │            -> summarize (Stage 7, extractive by default, optional LLM)
    │            -> store.upsertStories -> store.prune (Stage 5, data/db/, 90-day)
    │            -> data/news.json (live snapshot)
    │      -> npm test gate -> git commit -> GitHub Pages
@@ -119,8 +121,7 @@ chips come from sources/sources.json. data/db/ is written by the Node pipeline
 - `data/news.json` is still the live snapshot the current frontend reads —
   Stage 5 is additive. The Stage 8 dashboard will read `data/db/*` instead.
 
-### Classification + entities (Stage 6)
-- `scripts/pipeline/classify.js` (Node-only, zero dependencies) enriches every
+### Classification + entities (Stage 6)- `scripts/pipeline/classify.js` (Node-only, zero dependencies) enriches every
   staged story **after** Stage 4 clustering and **before** Stage 5 persistence:
   - **12-category taxonomy** stored in `story.subcategory`:
     `research, model, product, tools, funding, business, policy, safety,
@@ -157,6 +158,36 @@ chips come from sources/sources.json. data/db/ is written by the Node pipeline
   now ranks by Radar Score descending (it already folds in recency via
   `novelty`), so the top of the feed surfaces the most important fresh stories.
   The current frontend is unchanged and still reads the legacy `score` field.
+
+### Summarization / AI layer (Stage 7)
+- `scripts/pipeline/summarize.js` (Node-only, zero dependencies) enriches every
+  staged story's `ai` object **after** Stage 6 scoring and **before** Stage 5
+  persistence:
+  - `ai.summary` (string|null) — a 1-2 sentence **extractive** summary drawn
+    verbatim from the story's description/content.
+  - `ai.whyItMatters` (string|null) — `null` in extractive mode (never
+    invented); the optional LLM path may fill it (labeled).
+  - `ai.keyTakeaways` (string[]) — up to 3 verbatim sentence fragments.
+  - `ai.method` (`"extractive" | "llm" | null`) — **provenance label** so
+    AI-generated content is clearly distinguishable from the original source.
+- **Defaults to deterministic extractive**: zero credentials, zero network,
+  zero fabrication. Summary text is only ever copied from `title`/`description`.
+  A title-only or too-short body yields `ai.summary = null` (the title is never
+  used as a fake summary). Sentence boundaries are respected; no mid-word
+  clipping.
+- **Optional LLM path** (opt-in): enabled only when `SUMMARY_MODE=llm` **and**
+  `AI_API_KEY` is set (a GitHub encrypted Action secret, or `.env` locally). It
+  uses Node's built-in global `fetch` — **no new dependency**. The LLM is
+  instructed to extract only; a weak token-overlap grounding check rejects
+  fabricated output. Any failure (missing key, HTTP error, invalid JSON,
+  network error, ungrounded response) **falls back to extractive** and never
+  breaks the build.
+- **Idempotent**: an already-populated `ai.summary` is never overwritten
+  (mirrors Stage 5's `store.js` upsert semantics). Identical input gives
+  identical extractive output, so Stage 5 idempotency is preserved.
+- Stats land in the snapshot + run log: `summarizeMode`, `summarized`,
+  `summarizedExtractive`, `summarizedLlm`. The frontend is unchanged and the
+  data is backward compatible (`ai` is a pre-existing schema object).
 
 ### Empty/zero-state handling (Stage 1)
 - "Today" with no published stories (e.g. early in the day) no longer shows a
@@ -219,9 +250,9 @@ chips come from sources/sources.json. data/db/ is written by the Node pipeline
   so existing filters, search, date grouping, source display and tests remain
   intact — **no frontend redesign** in Stage 3.
 
-### Testing (Stage 1 + Stage 2 + Stage 3 + Stage 4 + Stage 5 + Stage 6)
+### Testing (Stage 1 + Stage 2 + Stage 3 + Stage 4 + Stage 5 + Stage 6 + Stage 7)
 - Node built-in test runner, zero extra dependencies: `npm test`
-  (`node --test tests/*.test.js`), **98 tests** (Stage 1 identity/empty-state +
+  (`node --test tests/*.test.js`), **116 tests** (Stage 1 identity/empty-state +
   Stage 2 config/parser/pipeline + Stage 3 canonical schema incl. RSS/Atom/RDF,
   URL tracking, timestamps, stable ids, validation, multi-source + Stage 4
   similarity clustering / false-positive guards / source aggregation /
@@ -230,7 +261,10 @@ chips come from sources/sources.json. data/db/ is written by the Node pipeline
   malformed-data handling / empty-input + Stage 6 classification / 12-category
   taxonomy / legacy chip mapping / entity extraction / false-positive +
   prefix-subsumption guards / tags / determinism + Radar Score component
-  monotonicity / weight blend / multi-source bonus / legacy 0-5 score).
+  monotonicity / weight blend / multi-source bonus / legacy 0-5 score + Stage 7
+  summarization / extractive determinism / title-only + short-input handling /
+  sentence boundaries / takeaway + length limits / idempotency / provenance /
+  anti-hallucination / LLM success, malformed, failure + extractive fallback).
 - Run in CI before the snapshot is regenerated, and on every relevant code push.
 - Browser-level smoke checks are run locally (jsdom harness) before pushing.
 - Snapshot verification runs at build time: every generated story is validated
@@ -248,7 +282,9 @@ chips come from sources/sources.json. data/db/ is written by the Node pipeline
 - Categories/entities and the Radar Score are deterministic keyword/lexicon
   heuristics (Stage 6) — not learned classifiers. They prefer false negatives
   and could be refined with an LLM later.
-- No summaries, no AI interpretation layer (`ai.*` null — Stage 7).
+- Summaries are **extractive** by default (Stage 7) — grounded, deterministic,
+  and safe, but they quote the feed blurb rather than re-read the full article
+  (full body `content` is never fetched). An opt-in LLM path can improve them.
 - The browser live fallback still parses feeds with DOMParser instead of the
   Node `feed.js` path — same source config + same canonical normalizer, two XML
   parsers. It also only runs the Stage 1 exact dedupe (no similarity clustering
@@ -304,7 +340,7 @@ CONFIG / SECRETS / TESTS / DOCS
 4. ~~`dedupe.js` similarity clustering -> "Reported by N sources"~~ **done** (implemented in `scripts/pipeline/dedupe.js`)
 5. ~~`store.js` persistence -> per-day NDJSON + index, idempotent upserts, CI writes~~ **done** (implemented in `scripts/pipeline/store.js`, `data/db/`, 90-day retention)
 6. ~~`classify.js` (12 categories) + entities + transparent `score.js` Radar Score~~ **done** (implemented in `scripts/pipeline/classify.js` + `scripts/pipeline/score.js`; 12-class subcategory, lexicons, 0-100 explainable Radar Score with stored components)
-7. `summarize.js` extractive + optional LLM path
+7. ~~`summarize.js` extractive + optional LLM path~~ **done** (implemented in `scripts/pipeline/summarize.js`; deterministic extractive default, opt-in LLM via encrypted `AI_API_KEY`, provenance label `ai.method`, anti-fabrication + fail-safe fallback, idempotent)
 8. Dashboard rebuild (Top Stories w/ score, stats, trends, detail modal)
 9. Search across history + filters (date / category / source / company / importance)
 10. Company/Model/Research/Global radars + automation logging + full docs + SEO

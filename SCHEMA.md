@@ -63,7 +63,7 @@ items" of Stage 1/2 with one well-defined shape that later stages can rely on.
 | `models` | string[] | `[]` |
 | `technologies` | string[] | `[]` |
 | `countries` | string[] | `[]` |
-| `ai` | object | `{ summary: null, whyItMatters: null, keyTakeaways: [] }` (Stage 7 fills) |
+| `ai` | object | Stage 7 fills: `{ summary: null, whyItMatters: null, keyTakeaways: [], method: null }` — `summary` (string\|null, extractive 1-2 sentences), `whyItMatters` (string\|null, `null` unless LLM path), `keyTakeaways` (string[], ≤3), `method` (`"extractive"\|"llm"\|null`, provenance label) |
 | `scores` | object | Stage 6: each of `impact, novelty, credibility, relevance, sourceConfidence` is a 0-100 number; `importance` kept as an alias of `impact`. |
 | `radarScore` | number \| undefined | Stage 6: explainable 0-100 Radar Score (weighted blend of `scores.*`); `undefined` for stories before Stage 6 scoring |
 | `relatedStoryIds` | string[] | `[]` (Stage 4: ids of every story merged into this one, canonical first) |
@@ -119,7 +119,7 @@ field it mirrors):
   "tags": [], "companies": [], "people": [], "models": [],
   "technologies": [], "countries": [],
   "content": null,
-  "ai": { "summary": null, "whyItMatters": null, "keyTakeaways": [] },
+  "ai": { "summary": null, "whyItMatters": null, "keyTakeaways": [], "method": null },
   "scores": {
     "importance": null, "impact": null, "novelty": null,
     "credibility": null, "relevance": null, "sourceConfidence": null
@@ -202,11 +202,13 @@ the snapshot under `stats.rejectedValidated`.
   `normalizeItem`; `scripts/build-news.js` validates every story, logs
   rejections, dedupes, **classifies (Stage 6: `classify.js` sets `subcategory`,
   entities, `tags` and refines `category` to a legacy top-5 id) and scores
-  (Stage 6: `score.js` fills `scores.*` and `radarScore`)**, then writes
+  (Stage 6: `score.js` fills `scores.*` and `radarScore`)**, **summarizes
+  (Stage 7: `summarize.js` fills `ai.summary`/`whyItMatters`/`keyTakeaways` +
+  `ai.method`, extractive by default, optional labeled LLM path)**, then writes
   `data/news.json` and persists a copy of each staged story via
   `scripts/pipeline/store.js` into `data/db/` (per-day NDJSON + `index.json`,
   idempotent upsert by `id`, 90-day retention). The store keeps
   `createdAt`/`updatedAt` as wall-clock metadata; `id` is the stable primary key.
 - **Tests**: `tests/schema.test.js` (Stage 3) + `tests/store.test.js` (Stage 5)
-  + `tests/classify.test.js` & `tests/score.test.js` (Stage 6) + existing
-  Stage 1/2/4 suites.
+  + `tests/classify.test.js` & `tests/score.test.js` (Stage 6) +
+  `tests/summarize.test.js` (Stage 7) + existing Stage 1/2/4 suites.

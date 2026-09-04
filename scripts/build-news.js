@@ -20,12 +20,16 @@ const { ingestAll } = require("./pipeline/ingest.js");
 const { clusterStories } = require("./pipeline/dedupe.js");
 const { classifyStories } = require("./pipeline/classify.js");
 const { scoreStories } = require("./pipeline/score.js");
+const { summarizeStories } = require("./pipeline/summarize.js");
+const { loadEnv } = require("./pipeline/env.js");
 const Store = require("./pipeline/store.js");
 
 const SNAPSHOT_FILE = path.join(__dirname, "..", "data", "news.json");
 const CONCURRENCY = 4;
 
 async function main() {
+  loadEnv();
+
   if (!SRC.configValid) {
     SRC.validationErrors.forEach((e) =>
       console.log(
@@ -74,10 +78,22 @@ async function main() {
   const stage6 = classifyStories(items);
   const scored = scoreStories(items);
 
+  // Stage 7: summarization (ai.summary / whyItMatters / keyTakeaways). Default
+  // mode is extractive (deterministic, zero credentials). An optional LLM path
+  // runs only when SUMMARY_MODE=llm AND AI_API_KEY is present; any failure
+  // degrades gracefully to extractive and never breaks the build.
+  const summarizeMode = (process.env.SUMMARY_MODE || "extract").toLowerCase();
+  const summarized = await summarizeStories(items, {
+    mode: summarizeMode,
+    apiKey: process.env.AI_API_KEY || null,
+    concurrency: Math.max(1, parseInt(process.env.SUMMARY_CONCURRENCY || "8", 10) || 8),
+  });
+
   // Stage 5: persist the staged (deduplicated + clustered + classified +
-  // scored) stories into data/db (per-day NDJSON + index + run log), then
-  // enforce the retention window. This is additive - data/news.json below is
-  // written unchanged and remains the live snapshot the current frontend reads.
+  // scored + summarized) stories into data/db (per-day NDJSON + index + run
+  // log), then enforce the retention window. This is additive - data/news.json
+  // below is written unchanged and remains the live snapshot the current
+  // frontend reads.
   const runStartedAt = new Date(started).toISOString();
   const stored = Store.upsertStories(items);
   const pruned = Store.prune(Store.DEFAULT_DB_DIR, { retentionDays: Store.DEFAULT_RETENTION_DAYS });
@@ -97,6 +113,10 @@ async function main() {
     radarMin: scored.stats.min,
     radarMax: scored.stats.max,
     radarMean: scored.stats.mean,
+    summarizeMode: summarized.mode,
+    summarized: summarized.stats.summarized,
+    summarizedExtractive: summarized.stats.extractive,
+    summarizedLlm: summarized.stats.llm,
   });
   items.sort(
     (a, b) =>
@@ -127,6 +147,10 @@ async function main() {
           radarMin: scored.stats.min,
           radarMax: scored.stats.max,
           radarMean: scored.stats.mean,
+          summarizeMode: summarized.mode,
+          summarized: summarized.stats.summarized,
+          summarizedExtractive: summarized.stats.extractive,
+          summarizedLlm: summarized.stats.llm,
         }),
         sources: report.results.map((r) => ({
           id: r.source.id,
@@ -149,7 +173,8 @@ async function main() {
       ` exactDedupe ${stage4.stats.afterExactDedupe}, similarityMergedInto ${stage4.stats.mergedInto},` +
       ` multiSource ${stage4.stats.multiSource}, maxCluster ${stage4.stats.maxClusterSize},` +
       ` storeDays ${stored.days}, stored ${stored.total}, prunedDays ${pruned.prunedDays.length},` +
-      ` classifyCats ${Object.keys(stage6.stats.categories).length}, radar 0-100 mean ${scored.stats.mean})`
+      ` classifyCats ${Object.keys(stage6.stats.categories).length}, radar 0-100 mean ${scored.stats.mean},` +
+      ` summarize ${summarized.mode} (${summarized.stats.summarized} of ${items.length}))`
   );
 
   // Fail loudly when nothing was fetched so the workflow catches problems.
