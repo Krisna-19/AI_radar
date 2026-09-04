@@ -55,6 +55,10 @@ scripts/build-news.js ──┴─> scripts/pipeline/ingest.js  (fetch + parse R
                                                            v1.0 → validate → exact dedupe)
                           └─> scripts/pipeline/dedupe.js (Stage 4: conservative similarity
                                                            clustering → "Reported by N sources")
+                          └─> scripts/pipeline/classify.js (Stage 6: 12-category taxonomy,
+                                                           entities, tags)
+                          └─> scripts/pipeline/score.js   (Stage 6: explainable 0-100 Radar
+                                                           Score with stored components)
                           └─> scripts/pipeline/store.js  (Stage 5: idempotent history in
                                                            data/db, 90-day retention)
    │
@@ -91,6 +95,8 @@ AI_radar/
 │       ├── feed.js           # RSS 2.0 / Atom / RSS 1.0-RDF parser
 │       ├── ingest.js         # Unified ingestion (dry-run CLI too)
 │       ├── dedupe.js         # Stage 4 similarity clustering
+│       ├── classify.js       # Stage 6 12-category taxonomy + entities + tags
+│       ├── score.js          # Stage 6 explainable 0-100 Radar Score
 │       └── store.js          # Stage 5 persistence (data/db, 90-day retention)
 ├── data/
 │   ├── news.json             # Committed live snapshot (auto-refreshed)
@@ -110,7 +116,7 @@ npm install        # only needed for the snapshot builder
 npm start          # serves the site at http://localhost:8080
 npm run build:news # manually regenerate data/news.json from the 13 feeds
 node scripts/pipeline/ingest.js   # dry-run: check every feed, no file writes
-npm test           # 76 unit tests (schema, config validation, parsers, identity keys, dedupe, store)
+npm test           # 98 unit tests (schema, config, parsers, identity, dedupe, classify, score, store)
 ```
 
 See [`SETUP.md`](SETUP.md) for the full guide (env vars, tests, troubleshooting).

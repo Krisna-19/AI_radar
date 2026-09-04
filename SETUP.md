@@ -44,15 +44,19 @@ covers `.env`); CI uses GitHub Action secrets instead.
 ## 4. Tests
 
 ```bash
-npm test           # node --test tests/*.test.js  (expect 76/76)
+npm test           # node --test tests/*.test.js  (expect 98/98)
 ```
 
 Covers Stage 1 (identity keys, empty states), Stage 2 (source config validation,
 RSS/Atom/RSS-1.0 parsing, graceful feed failure handling, line formatting),
 Stage 3 (canonical Story schema: RSS/Atom/RDF normalization, URL tracking params,
-timestamp normalization, stable ids, schema validation, multi-source) and
+timestamp normalization, stable ids, schema validation, multi-source),
 Stage 5 (persistent store: idempotent upsert, day bucketing, read APIs,
-retention/prune, run logs, determinism, malformed-data handling, empty input).
+retention/prune, run logs, determinism, malformed-data handling, empty input) and
+Stage 6 (classification: 12-category taxonomy, legacy top-5 bucket mapping,
+entity extraction with false-positive + prefix-subsumption guards, tags,
+determinism; Radar Score: weight blend, component monotonicity, multi-source
+bonus, 0-100 range, legacy 0-5 alias).
 Tests are also run in CI on every code push before the snapshot is regenerated.
 
 ## 5. Rebuild the news snapshot
@@ -65,13 +69,15 @@ This fetches all enabled sources from `sources/sources.json`, parses each feed,
 and normalizes every item into a **canonical Story** (`js/shared.js`
 `normalizeItem`, see [SCHEMA.md](SCHEMA.md)) with stable IDs. It **validates each
 story** and logs + drops any that fail validation (never silently), then dedupes,
-similarity-clusters (Stage 4), **persists a copy of each staged story into
-`data/db/`** (per-day NDJSON + `index.json`, idempotent, with a 90-day retention
-prune), and writes `data/news.json`. It **aborts with exit code 1** if the source
-config is invalid or zero items survive. The final line reports normalized vs
-rejected counts plus Stage 4/5 numbers (e.g. `Saved 2689 unique stories …
-(normalized 2694, rejected 0, exactDedupe 2694, similarityMergedInto 5, …
-storeDays 7, stored 2689, prunedDays 0)`).
+similarity-clusters (Stage 4), **classifies** (Stage 6: 12-category `subcategory`,
+entities, `tags`, a refined legacy top-5 `category`) and **scores** (Stage 6:
+explainable 0-100 `radarScore` with stored components), **persists a copy of each
+staged story into `data/db/`** (per-day NDJSON + `index.json`, idempotent, with a
+90-day retention prune), and writes `data/news.json`. It **aborts with exit code
+1** if the source config is invalid or zero items survive. The final line reports
+normalized vs rejected counts plus Stage 4-6 numbers (e.g. `Saved 2689 unique
+stories … (normalized 2694, rejected 0, exactDedupe 2694, similarityMergedInto 5,
+… storeDays 7, stored 2689, prunedDays 0, classifyCats 12, radar 0-100 mean 57)`).
 
 To check feeds without writing any file (diagnostic dry run):
 

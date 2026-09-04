@@ -4,7 +4,7 @@ This document describes the current architecture of AI RADAR and the target
 architecture we are evolving toward (approved roadmap, Stage 1..10). It is a
 living document: update it whenever a stage lands.
 
-## 1. Current architecture (as of Stage 5)
+## 1. Current architecture (as of Stage 6)
 
 ### Stack
 - 100% static web app (no framework, no build step) served by GitHub Pages
@@ -119,6 +119,45 @@ chips come from sources/sources.json. data/db/ is written by the Node pipeline
 - `data/news.json` is still the live snapshot the current frontend reads —
   Stage 5 is additive. The Stage 8 dashboard will read `data/db/*` instead.
 
+### Classification + entities (Stage 6)
+- `scripts/pipeline/classify.js` (Node-only, zero dependencies) enriches every
+  staged story **after** Stage 4 clustering and **before** Stage 5 persistence:
+  - **12-category taxonomy** stored in `story.subcategory`:
+    `research, model, product, tools, funding, business, policy, safety,
+    opensource, partnership, industry, other`. Ordered, first-match rule
+    precedence; word-boundary matching (so `api` never matches the `api` in
+    `rapid`); low-signal input falls through to `other` (prefers false negatives).
+  - Backward-compatible **top-5 chip**: the legacy `story.category` (each
+    Stage-1..5 story keeps its value) is unchanged; `story.chip` holds the
+    mapping the current frontend filters on
+    (`model|product|tools->product`, `funding|business->funding`,
+    `policy|safety->policy`, `research->research`,
+    `opensource|partnership|industry|other->news`).
+  - **Entity extraction** into `companies / models / people / technologies /
+    countries` from conservative lexicons, matched as whole tokens with
+    prefix-subsumption (a bare `gpt` does not re-fire when `gpt-5` matched),
+    and **tags** = matched entities + topical keywords (capped at 6).
+- **Radar Score** (`scripts/pipeline/score.js`, zero dependencies) is a
+  transparent, explainable 0-100 score:
+  ```
+  radar = 30% impact + 25% novelty + 20% credibility
+        + 15% relevance + 10% sourceConfidence
+  ```
+  - Every component is **stored** on `story.scores.{impact, novelty,
+    credibility, relevance, sourceConfidence}` (each 0-100) so the score is
+    explainable, plus `story.radarScore` (0-100) and the legacy `story.score`
+    (radarScore/20, keeping the current 0-5 sort range).
+  - `impact` = category base + multi-source (Stage 4 cluster) bonus;
+    `novelty` = freshness vs `discoveredAt` (deterministic, no wall clock);
+    `credibility` = source `reliability` + body-robustness bonus;
+    `relevance` = AI-topic signal density + entity presence;
+    `sourceConfidence` = source `weight` + multi-source confirmation.
+  - Deterministic: identical input ⇒ identical Radar Score.
+- The existing sort in `build-news.js` (which uses the legacy `story.score`)
+  now ranks by Radar Score descending (it already folds in recency via
+  `novelty`), so the top of the feed surfaces the most important fresh stories.
+  The current frontend is unchanged and still reads the legacy `score` field.
+
 ### Empty/zero-state handling (Stage 1)
 - "Today" with no published stories (e.g. early in the day) no longer shows a
   confusing zero page: a notice explains it and the most recent 48h of stories
@@ -180,15 +219,18 @@ chips come from sources/sources.json. data/db/ is written by the Node pipeline
   so existing filters, search, date grouping, source display and tests remain
   intact — **no frontend redesign** in Stage 3.
 
-### Testing (Stage 1 + Stage 2 + Stage 3 + Stage 4 + Stage 5)
+### Testing (Stage 1 + Stage 2 + Stage 3 + Stage 4 + Stage 5 + Stage 6)
 - Node built-in test runner, zero extra dependencies: `npm test`
-  (`node --test tests/*.test.js`), **76 tests** (Stage 1 identity/empty-state +
+  (`node --test tests/*.test.js`), **98 tests** (Stage 1 identity/empty-state +
   Stage 2 config/parser/pipeline + Stage 3 canonical schema incl. RSS/Atom/RDF,
   URL tracking, timestamps, stable ids, validation, multi-source + Stage 4
   similarity clustering / false-positive guards / source aggregation /
   determinism / ordering independence / bounds + Stage 5 persistent store /
   idempotency / day bucketing / read APIs / retention / run logs / determinism /
-  malformed-data handling / empty-input).
+  malformed-data handling / empty-input + Stage 6 classification / 12-category
+  taxonomy / legacy chip mapping / entity extraction / false-positive +
+  prefix-subsumption guards / tags / determinism + Radar Score component
+  monotonicity / weight blend / multi-source bonus / legacy 0-5 score).
 - Run in CI before the snapshot is regenerated, and on every relevant code push.
 - Browser-level smoke checks are run locally (jsdom harness) before pushing.
 - Snapshot verification runs at build time: every generated story is validated
@@ -203,8 +245,9 @@ chips come from sources/sources.json. data/db/ is written by the Node pipeline
   run, but the current live frontend still reads only `data/news.json` — the
   dashboard changes to read history come in Stage 8, and cross-day search in
   Stage 9.
-- Categories are keyword heuristics; `scores.*` components and entities stay
-  `null`/`[]` (radar Score is Stage 6, entities/classify Stage 6).
+- Categories/entities and the Radar Score are deterministic keyword/lexicon
+  heuristics (Stage 6) — not learned classifiers. They prefer false negatives
+  and could be refined with an LLM later.
 - No summaries, no AI interpretation layer (`ai.*` null — Stage 7).
 - The browser live fallback still parses feeds with DOMParser instead of the
   Node `feed.js` path — same source config + same canonical normalizer, two XML
@@ -260,7 +303,7 @@ CONFIG / SECRETS / TESTS / DOCS
 3. ~~`normalize.js` canonical Story schema~~ **done** (implemented in `js/shared.js`, see SCHEMA.md)
 4. ~~`dedupe.js` similarity clustering -> "Reported by N sources"~~ **done** (implemented in `scripts/pipeline/dedupe.js`)
 5. ~~`store.js` persistence -> per-day NDJSON + index, idempotent upserts, CI writes~~ **done** (implemented in `scripts/pipeline/store.js`, `data/db/`, 90-day retention)
-6. `classify.js` (12 categories) + entities + transparent `score.js` Radar Score
+6. ~~`classify.js` (12 categories) + entities + transparent `score.js` Radar Score~~ **done** (implemented in `scripts/pipeline/classify.js` + `scripts/pipeline/score.js`; 12-class subcategory, lexicons, 0-100 explainable Radar Score with stored components)
 7. `summarize.js` extractive + optional LLM path
 8. Dashboard rebuild (Top Stories w/ score, stats, trends, detail modal)
 9. Search across history + filters (date / category / source / company / importance)
@@ -271,7 +314,7 @@ CONFIG / SECRETS / TESTS / DOCS
   proxy for live fallback debugging).
 - Regenerate the snapshot: `npm run build:news`.
 - Check feeds without writing files: `node scripts/pipeline/ingest.js`.
-- Tests: `npm test` (76 tests).
+- Tests: `npm test` (98 tests).
 - Push triggers the CI pipeline (tests + fresh snapshot + Pages deploy).
 - Full local setup + troubleshooting: [SETUP.md](SETUP.md);
   source catalog/how-to-add: [SOURCES.md](SOURCES.md);

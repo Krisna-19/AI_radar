@@ -18,6 +18,8 @@ const Core = require("../js/shared.js");
 const SRC = require("../sources/index.js");
 const { ingestAll } = require("./pipeline/ingest.js");
 const { clusterStories } = require("./pipeline/dedupe.js");
+const { classifyStories } = require("./pipeline/classify.js");
+const { scoreStories } = require("./pipeline/score.js");
 const Store = require("./pipeline/store.js");
 
 const SNAPSHOT_FILE = path.join(__dirname, "..", "data", "news.json");
@@ -65,10 +67,17 @@ async function main() {
   const stage4 = clusterStories(deduped);
   const items = stage4.items;
 
-  // Stage 5: persist the staged (deduplicated + clustered) stories into
-  // data/db (per-day NDJSON + index + run log), then enforce the retention
-  // window. This is additive - data/news.json below is written unchanged and
-  // remains the live snapshot the current frontend reads.
+  // Stage 6: transparent classification (12-category subcategory + entities +
+  // tags, mapped onto the legacy top-5 chip) and the explainable Radar Score
+  // (0-100 with stored components). Runs BEFORE sorting and BEFORE Stage 5
+  // persistence so both data/news.json and data/db carry the enriched fields.
+  const stage6 = classifyStories(items);
+  const scored = scoreStories(items);
+
+  // Stage 5: persist the staged (deduplicated + clustered + classified +
+  // scored) stories into data/db (per-day NDJSON + index + run log), then
+  // enforce the retention window. This is additive - data/news.json below is
+  // written unchanged and remains the live snapshot the current frontend reads.
   const runStartedAt = new Date(started).toISOString();
   const stored = Store.upsertStories(items);
   const pruned = Store.prune(Store.DEFAULT_DB_DIR, { retentionDays: Store.DEFAULT_RETENTION_DAYS });
@@ -84,6 +93,10 @@ async function main() {
     unchanged: stored.unchanged,
     prunedDays: pruned.prunedDays.length,
     prunedStories: pruned.prunedStories,
+    classifiedCategories: Object.keys(stage6.stats.categories).length,
+    radarMin: scored.stats.min,
+    radarMax: scored.stats.max,
+    radarMean: scored.stats.mean,
   });
   items.sort(
     (a, b) =>
@@ -109,6 +122,11 @@ async function main() {
           storedDays: stored.days,
           storedStories: stored.total,
           prunedDays: pruned.prunedDays.length,
+          classifierCategories: Object.keys(stage6.stats.categories).length,
+          subcategoryCounts: stage6.stats.categories,
+          radarMin: scored.stats.min,
+          radarMax: scored.stats.max,
+          radarMean: scored.stats.mean,
         }),
         sources: report.results.map((r) => ({
           id: r.source.id,
@@ -130,7 +148,8 @@ async function main() {
       ` (normalized ${report.allItems.length}, rejected ${rejected.length},` +
       ` exactDedupe ${stage4.stats.afterExactDedupe}, similarityMergedInto ${stage4.stats.mergedInto},` +
       ` multiSource ${stage4.stats.multiSource}, maxCluster ${stage4.stats.maxClusterSize},` +
-      ` storeDays ${stored.days}, stored ${stored.total}, prunedDays ${pruned.prunedDays.length})`
+      ` storeDays ${stored.days}, stored ${stored.total}, prunedDays ${pruned.prunedDays.length},` +
+      ` classifyCats ${Object.keys(stage6.stats.categories).length}, radar 0-100 mean ${scored.stats.mean})`
   );
 
   // Fail loudly when nothing was fetched so the workflow catches problems.
