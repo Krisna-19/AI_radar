@@ -691,6 +691,12 @@
       state.page = 1;
       renderAll();
     },
+    /* Stage 9: allow the History search view to activate/deactivate itself.
+     * Toggling a body class lets CSS switch which section is shown; the live
+     * feed logic itself is never touched. */
+    activateView: function (name) {
+      document.body.classList.toggle("history-active", name === "history");
+    },
   };
 
   if (window.AIRadarDashboard && typeof window.AIRadarDashboard.attach === "function") {

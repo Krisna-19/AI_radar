@@ -38,6 +38,15 @@ const SNAPSHOT_PATH = "data/news.json";
 /* Relative path of the canonical source configuration (fetched by the browser). */
 const SOURCES_PATH = "sources/sources.json";
 
+/* Stage 9: relative path of the persistent archive index (data/db) that the
+ * History search view reads. The archive is committed + served like news.json. */
+const SEARCH_DB_INDEX_PATH = "data/db/index.json";
+
+/* Browser-only: build the relative URL of a per-day NDJSON archive file. */
+function dbDayFileUrl(day) {
+  return "data/db/days/" + day + ".ndjson";
+}
+
 const CATEGORIES = [
   { id: "research", label: "Research & Papers", icon: "🧠" },
   { id: "product", label: "Products & Launches", icon: "🚀" },
@@ -58,5 +67,6 @@ if (typeof module !== "undefined" && module.exports) {
     CACHE_TTL_MS,
     FETCH_TIMEOUT_MS,
     SNAPSHOT_PATH,
+    SEARCH_DB_INDEX_PATH,
   };
 }

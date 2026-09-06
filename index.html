@@ -14,6 +14,7 @@
     />
     <link rel="stylesheet" href="css/style.css" />
     <link rel="stylesheet" href="css/dashboard.css" />
+    <link rel="stylesheet" href="css/search.css" />
   </head>
   <body>
     <canvas id="bg"></canvas>
@@ -75,10 +76,20 @@
         <div class="chips-row" id="range-tabs"></div>
         <div class="chips-row" id="category-chips"></div>
         <div class="chips-row source-scroll" id="source-bar"></div>
-        <label class="group-toggle">
-          <input id="group-toggle" type="checkbox" />
-          <span>Group by subcategory</span>
-        </label>
+        <div class="toolbar-actions">
+          <label class="group-toggle">
+            <input id="group-toggle" type="checkbox" />
+            <span>Group by subcategory</span>
+          </label>
+          <button
+            type="button"
+            id="history-toggle"
+            class="btn-history"
+            aria-pressed="false"
+          >
+            🕘 History search
+          </button>
+        </div>
       </section>
 
       <section class="top-stories">
@@ -104,6 +115,72 @@
 
         <div id="grid-more" class="grid-more" style="display: none"></div>
       </section>
+
+      <section id="history-view" class="history-view" style="display: none">
+        <h2 class="section-title"><span>🕘</span> History search</h2>
+        <p class="history-intro">
+          Search and filter across the full archived history of stories.
+        </p>
+
+        <div id="history-status" class="history-status" role="status"></div>
+        <div id="history-error" class="state-box error-box" style="display: none"></div>
+
+        <div class="history-controls">
+          <div class="search-wrap">
+            <input
+              id="history-search"
+              type="search"
+              placeholder="Search the archive — title, summary, company, model…"
+              autocomplete="off"
+            />
+          </div>
+
+          <div class="history-row">
+            <label class="history-field">
+              <span>From</span>
+              <input id="history-from" type="date" />
+            </label>
+            <label class="history-field">
+              <span>To</span>
+              <input id="history-to" type="date" />
+            </label>
+            <label class="history-field history-company-field">
+              <span>Company / entity</span>
+              <input id="history-company" type="text" list="history-companies-list" placeholder="e.g. OpenAI" autocomplete="off" />
+              <datalist id="history-companies-list"></datalist>
+            </label>
+          </div>
+
+          <div class="history-facet">
+            <span class="facet-label">Category</span>
+            <div class="facet-row" id="history-cats"></div>
+          </div>
+          <div class="history-facet">
+            <span class="facet-label">Subcategory</span>
+            <div class="facet-row" id="history-subs"></div>
+          </div>
+          <div class="history-facet">
+            <span class="facet-label">Source</span>
+            <div class="facet-row" id="history-sources"></div>
+          </div>
+          <div class="history-facet">
+            <span class="facet-label">Importance</span>
+            <div class="facet-row" id="history-importance"></div>
+          </div>
+
+          <div class="history-actions">
+            <button type="button" id="history-clear" class="btn-clear">Clear all filters</button>
+          </div>
+        </div>
+
+        <div id="history-count" class="history-count" aria-live="polite"></div>
+
+        <div id="history-empty" class="state-box" style="display: none"></div>
+
+        <div id="history-grid" class="grid"></div>
+
+        <div id="history-more" class="grid-more" style="display: none"></div>
+      </section>
     </main>
 
     <footer class="site-footer">
@@ -122,5 +199,7 @@
     <script src="js/aggregator.js"></script>
     <script src="js/app.js"></script>
     <script src="js/dashboard.js"></script>
+    <script src="js/search.js"></script>
+    <script src="js/history.js"></script>
   </body>
 </html>

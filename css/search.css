@@ -1,0 +1,166 @@
+/* ============ AI RADAR — Stage 9 History / cross-day search ============
+ * Additive styles only. Reuses :root variables from style.css and the visual
+ * language of dashboard.css. If this stylesheet fails to load, the classic
+ * feed still renders correctly (History markup is hidden until activated). */
+
+/* ---------- History activation ---------- */
+body.history-active .toolbar,
+body.history-active .top-stories,
+body.history-active .news {
+  display: none;
+}
+
+.history-view {
+  margin-top: 4px;
+}
+
+.history-intro {
+  color: var(--muted, #8a94a6);
+  font-size: 0.92rem;
+  margin: -6px 0 16px;
+}
+
+/* ---------- toolbar toggle button ---------- */
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.btn-history {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(14, 165, 233, 0.4);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.btn-history:hover {
+  background: rgba(14, 165, 233, 0.12);
+}
+
+.btn-history.active {
+  background: var(--accent, #0ea5e9);
+  color: #fff;
+}
+
+/* ---------- status / count ---------- */
+.history-status {
+  font-size: 0.86rem;
+  color: var(--muted, #8a94a6);
+  margin-bottom: 12px;
+}
+
+.history-count {
+  margin: 14px 0 10px;
+  font-size: 0.86rem;
+  color: var(--muted, #8a94a6);
+}
+
+/* ---------- controls ---------- */
+.history-controls {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 8px;
+}
+
+.history-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 14px 0;
+}
+
+.history-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 0.8rem;
+  color: var(--muted, #8a94a6);
+}
+
+.history-field input {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font: inherit;
+}
+
+.history-company-field input {
+  min-width: 240px;
+}
+
+/* ---------- facets ---------- */
+.history-facet {
+  margin: 10px 0;
+}
+
+.facet-label {
+  display: block;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted, #8a94a6);
+  margin-bottom: 6px;
+}
+
+.facet-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.facet-chip {
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.facet-chip:hover {
+  border-color: rgba(14, 165, 233, 0.5);
+}
+
+.facet-chip.active {
+  background: var(--accent, #0ea5e9);
+  border-color: var(--accent, #0ea5e9);
+  color: #fff;
+}
+
+.history-actions {
+  margin-top: 14px;
+}
+
+.btn-clear {
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: transparent;
+  color: var(--muted, #8a94a6);
+  font: inherit;
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+
+.btn-clear:hover {
+  color: var(--text);
+  border-color: rgba(239, 68, 68, 0.5);
+}
