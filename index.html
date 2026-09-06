@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="css/style.css" />
     <link rel="stylesheet" href="css/dashboard.css" />
     <link rel="stylesheet" href="css/search.css" />
+    <link rel="stylesheet" href="css/trends.css" />
   </head>
   <body>
     <canvas id="bg"></canvas>
@@ -88,6 +89,14 @@
             aria-pressed="false"
           >
             🕘 History search
+          </button>
+          <button
+            type="button"
+            id="trends-toggle"
+            class="btn-trends"
+            aria-pressed="false"
+          >
+            📈 Trends
           </button>
         </div>
       </section>
@@ -181,6 +190,47 @@
 
         <div id="history-more" class="grid-more" style="display: none"></div>
       </section>
+
+      <section id="trends-view" class="trends-view" style="display: none">
+        <h2 class="section-title"><span>📈</span> Trends &amp; signals</h2>
+        <p class="history-intro">
+          How stories, scores and entities have moved across the archive.
+        </p>
+
+        <div id="trends-status" class="history-status" role="status"></div>
+        <div id="trends-error" class="state-box error-box" style="display: none"></div>
+
+        <div class="history-controls">
+          <div class="facet-row" id="trends-range"></div>
+        </div>
+
+        <div id="trends-stats" class="trend-stats"></div>
+
+        <div id="trends-summary" class="trend-summary" aria-live="polite"></div>
+
+        <h3 class="section-title small"><span>📊</span> Volume by day</h3>
+        <div id="trends-chart-volume" class="chart-holder"></div>
+
+        <h3 class="section-title small"><span>🎯</span> Average Radar Score by day</h3>
+        <div id="trends-chart-score" class="chart-holder"></div>
+
+        <h3 class="section-title small"><span>🏷️</span> Score distribution</h3>
+        <div id="trends-bands" class="panel"></div>
+
+        <h3 class="section-title small"><span>🗂️</span> Category mix</h3>
+        <div id="trends-categories" class="panel"></div>
+
+        <h3 class="section-title small"><span>🔥</span> Trending entities</h3>
+        <div id="trends-trending" class="panel"></div>
+
+        <h3 class="section-title small"><span>🏢</span> Most-mentioned entities</h3>
+        <div id="trends-entities" class="panel"></div>
+
+        <h3 class="section-title small"><span>📡</span> Top sources</h3>
+        <div id="trends-sources" class="panel"></div>
+
+        <div id="trends-empty" class="state-box" style="display: none"></div>
+      </section>
     </main>
 
     <footer class="site-footer">
@@ -201,5 +251,7 @@
     <script src="js/dashboard.js"></script>
     <script src="js/search.js"></script>
     <script src="js/history.js"></script>
+    <script src="js/trends.js"></script>
+    <script src="js/trends-view.js"></script>
   </body>
 </html>

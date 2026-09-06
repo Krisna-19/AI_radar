@@ -696,6 +696,7 @@
      * feed logic itself is never touched. */
     activateView: function (name) {
       document.body.classList.toggle("history-active", name === "history");
+      document.body.classList.toggle("trends-active", name === "trends");
     },
   };
 
