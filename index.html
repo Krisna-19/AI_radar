@@ -16,6 +16,7 @@
     <link rel="stylesheet" href="css/dashboard.css" />
     <link rel="stylesheet" href="css/search.css" />
     <link rel="stylesheet" href="css/trends.css" />
+    <link rel="stylesheet" href="css/pipeline.css" />
   </head>
   <body>
     <canvas id="bg"></canvas>
@@ -97,6 +98,14 @@
             aria-pressed="false"
           >
             📈 Trends
+          </button>
+          <button
+            type="button"
+            id="pipeline-toggle"
+            class="btn-pipeline"
+            aria-pressed="false"
+          >
+            🔧 Pipeline
           </button>
         </div>
       </section>
@@ -231,6 +240,29 @@
 
         <div id="trends-empty" class="state-box" style="display: none"></div>
       </section>
+
+      <section id="pipeline-view" class="pipeline-view" style="display: none">
+        <h2 class="section-title"><span>🔧</span> Pipeline health</h2>
+        <p class="history-intro">
+          How recent automation runs performed — stories stored, radar coverage
+          and per-source feed status.
+        </p>
+
+        <div id="pipeline-status" class="pipeline-status" role="status"></div>
+        <div id="pipeline-error" class="state-box error-box" style="display: none"></div>
+        <div id="pipeline-banner" class="panel"></div>
+
+        <h3 class="section-title small"><span>📋</span> Last build</h3>
+        <div id="pipeline-last" class="panel"></div>
+
+        <h3 class="section-title small"><span>📡</span> Source health</h3>
+        <div id="pipeline-sources" class="panel"></div>
+
+        <h3 class="section-title small"><span>🕒</span> Recent runs</h3>
+        <div id="pipeline-history" class="panel"></div>
+
+        <div id="pipeline-empty" class="state-box" style="display: none"></div>
+      </section>
     </main>
 
     <footer class="site-footer">
@@ -253,5 +285,7 @@
     <script src="js/history.js"></script>
     <script src="js/trends.js"></script>
     <script src="js/trends-view.js"></script>
+    <script src="js/pipeline-ops.js"></script>
+    <script src="js/pipeline-view.js"></script>
   </body>
 </html>

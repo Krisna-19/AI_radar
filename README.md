@@ -20,6 +20,9 @@ AI RADAR is a **self-hosted daily AI-news aggregator**. Every few hours it fetch
 | **Summaries** | Extractive AI summary + key takeaways per story (no fabrication); optional LLM enrichment opt-in |
 | **Source filters** | Toggle any of the 13 sources on/off |
 | **Search** | Live keyword search across titles & descriptions |
+| **History** | Cross-day archive search with date / category / source / entity filters |
+| **Trends** | Volume, score, category and entity trends across the archive |
+| **Pipeline health** | Per-source feed status + run history from the automation log |
 | **Auto refresh** | GitHub Actions re-aggregates every **3 hours** |
 | **Resilience** | Falls back to live proxies, then sample content, if the snapshot is absent |
 | **Zero config** | Pure HTML/CSS/JS — no build step, no API keys, no tracking |
@@ -62,8 +65,11 @@ scripts/build-news.js ──┴─> scripts/pipeline/ingest.js  (fetch + parse R
                                                            Score with stored components)
                           └─> scripts/pipeline/summarize.js (Stage 7: extractive summary +
                                                            key takeaways; optional labeled LLM)
-                          └─> scripts/pipeline/store.js  (Stage 5: idempotent history in
-                                                           data/db, 90-day retention)
+└─> scripts/pipeline/store.js  (Stage 5: idempotent history in
+                                                            data/db, 90-day retention; Stage 11:
+                                                            self-heals day-bucket moves, run log
+                                                            + runs[] index for the Pipeline view)
+                           └─> scripts/cleanup-archive.js (one-time stale-row repair, idempotent)
    │
    ▼
 data/news.json  (committed live snapshot)  +  data/db/  (persistent archive)
@@ -81,12 +87,24 @@ Node pipeline (identical stories, identical IDs). Architecture details:
 ```
 AI_radar/
 ├── index.html                # Single-page layout
-├── css/style.css             # Dark "radar" theme
+├── css/
+│   ├── style.css             # Dark "radar" theme
+│   ├── dashboard.css         # Stage 8 dashboard extras
+│   ├── search.css            # Stage 9 history view
+│   ├── trends.css            # Stage 10 trends view
+│   └── pipeline.css          # Stage 11 pipeline view
 ├── js/
 │   ├── config.js             # Fetch strategies + paths (Node loads sources)
 │   ├── shared.js             # Pure helpers + canonical Story normalizer (browser + Node)
 │   ├── aggregator.js         # Snapshot / cache / live aggregation
-│   └── app.js                # Rendering, filters, search, clock
+│   ├── app.js                # Rendering, filters, search, clock
+│   ├── dashboard.js          # Stage 8 top-signal/dashboard cards
+│   ├── search.js             # Stage 9 archive search + filters
+│   ├── history.js            # Stage 9 history view controller
+│   ├── trends.js             # Stage 10 pure trend aggregation
+│   ├── trends-view.js        # Stage 10 trends view controller
+│   ├── pipeline-ops.js       # Stage 11 pure pipeline-health helpers
+│   └── pipeline-view.js      # Stage 11 pipeline view controller
 ├── sources/
 │   ├── sources.json          # Canonical source config (only place to add feeds)
 │   └── index.js              # Sources loader + validation (Node)
@@ -101,7 +119,9 @@ AI_radar/
 │       ├── classify.js       # Stage 6 12-category taxonomy + entities + tags
 │       ├── score.js          # Stage 6 explainable 0-100 Radar Score
 │       ├── summarize.js      # Stage 7 extractive summary + optional LLM path
-│       └── store.js          # Stage 5 persistence (data/db, 90-day retention)
+│       └── store.js          # Stage 5 persistence (data/db, 90-day retention; Stage 11:
+│                             #   re-bucket self-heal + runs[] log index)
+│   ├── cleanup-archive.js    # Stage 11 one-time stale-row repair (idempotent)
 ├── data/
 │   ├── news.json             # Committed live snapshot (auto-refreshed)
 │   └── db/                   # Persistent archive (days/*.ndjson, index.json, runs/)
@@ -120,7 +140,7 @@ npm install        # only needed for the snapshot builder
 npm start          # serves the site at http://localhost:8080
 npm run build:news # manually regenerate data/news.json from the 13 feeds
 node scripts/pipeline/ingest.js   # dry-run: check every feed, no file writes
-npm test           # 116 unit tests (schema, config, parsers, identity, dedupe, classify, score, summarize, store)
+npm test           # 190 unit tests (schema, config, parsers, identity, dedupe, classify, score, summarize, store, search, trends, pipeline-ops)
 ```
 
 See [`SETUP.md`](SETUP.md) for the full guide (env vars, tests, troubleshooting).

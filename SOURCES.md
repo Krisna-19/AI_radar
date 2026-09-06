@@ -44,7 +44,7 @@ item is normalized into the canonical Story model (see [SCHEMA.md](SCHEMA.md)).
 ```bash
 node scripts/pipeline/ingest.js          # fetches every enabled feed, prints [OK]/[WARN]/[ERROR]
 npm run build:news                       # regenerates the snapshot (aborts if config is invalid)
-npm test                                  # 29/29 unit tests
+npm test                                  # 190/190 unit tests
 ```
 
 4. Commit (the snapshot regenerates automatically on push) or open a PR in the
@@ -113,4 +113,6 @@ prints one line per feed:
 
 That per-source data (`ok/failed/empty`, item counts, error types, response times)
 is also embedded into the snapshot's `stats` + `sources` sections — useful for
-spotting a silently dying feed.
+spotting a silently dying feed. Since Stage 11 the same per-source health also
+lands in each run's log (`data/db/runs/<runId>.json`) and is listed in the
+website's 🔧 **Pipeline** view (latest run + run history, capped at 120 runs).

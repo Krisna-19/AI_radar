@@ -1,10 +1,10 @@
 # AI RADAR — Architecture
 
 This document describes the current architecture of AI RADAR and the target
-architecture we are evolving toward (approved roadmap, Stage 1..10). It is a
+architecture we are evolving toward (approved roadmap, Stage 1..11). It is a
 living document: update it whenever a stage lands.
 
-## 1. Current architecture (as of Stage 6)
+## 1. Current architecture (as of Stage 11)
 
 ### Stack
 - 100% static web app (no framework, no build step) served by GitHub Pages
@@ -96,8 +96,8 @@ chips come from sources/sources.json. data/db/ is written by the Node pipeline
   archives every staged run into **`data/db/`**:
   ```
   data/db/
-    runs/<runId>.json         one per pipeline run (metadata/run log)
-    index.json                format, updatedAt, day -> ids, id -> {day, source}
+    runs/<runId>.json         one per pipeline run (metadata/run log, incl. per-source statuses)
+    index.json                format, updatedAt, day -> ids, id -> {day, source}, runs[] (cap 120)
     days/<yyyy-mm-dd>.ndjson  one canonical Story (JSON) per line
   ```
 - **Idempotent upsert**: each story is keyed by its stable Stage-1 `id`. Re-running
@@ -114,10 +114,18 @@ chips come from sources/sources.json. data/db/ is written by the Node pipeline
 - **Deterministic & lossless**: identical input ⇒ identical stored content
   (day rows sorted by id); the complete canonical Story is persisted verbatim.
   A malformed NDJSON line is skipped and reported, never fatal.
+- **Re-bucket self-heal (Stage 11)**: if an existing story's day bucket changes
+  (a re-publish that moves `publishedAt` to another UTC day), `upsertStories`
+  purges the story's row from its previous day file before merging, so an id is
+  never present in two day buckets. Pre-Stage-11 archives may still contain such
+  stale rows; the one-time, idempotent `scripts/cleanup-archive.js` repairs them
+  (keeps the row in the indexed home day and removes the copies elsewhere).
 - **APIs for later stages** (tested now): `readDay(dbDir, day)`,
-  `readById(dbDir, id)`, `recent(dbDir, { limit })`, `stats(dbDir)`, plus
-  `upsertStories`, `prune`, `runLog`. This is the **swap boundary**: moving to
-  Supabase/D1 later requires rewriting only `store.js`.
+  `readById(dbDir, id)`, `recent(dbDir, { limit })`, `stats(dbDir)`,
+  `removeFromDay(dbDir, id, day)`, `removeStory(dbDir, id)`,
+  `assertNoDuplicateIds(dbDir)`, plus `upsertStories`, `prune`, `runLog`. This
+  is the **swap boundary**: moving to Supabase/D1 later requires rewriting only
+  `store.js`.
 - `data/news.json` is still the live snapshot the current frontend reads —
   Stage 5 is additive. The Stage 8 dashboard will read `data/db/*` instead.
 
@@ -189,6 +197,53 @@ chips come from sources/sources.json. data/db/ is written by the Node pipeline
   `summarizedExtractive`, `summarizedLlm`. The frontend is unchanged and the
   data is backward compatible (`ai` is a pre-existing schema object).
 
+### Dashboard / frontend ensemble (Stage 8)
+- `js/dashboard.js` + `js/app.js` render a rebuilt dashboard **directly from the
+  committed snapshot** (`data/news.json`) — no runtime feed fetching on load.
+- Top-signal hero (highest `radarScore`, recency tiebreak), "Top stories today"
+  (top 3 by recency × source weight), category/source/range filters that
+  re-sort the feed client-side, and per-story inline `<details>` expansion for
+  summary + key takeaways (no modal, no routing, no URL changes).
+- Staging additive and backward compatible: the legacy `score`/`category` fields
+  are still read where the new `radarScore`/`subcategory` are not yet used.
+
+### History search (Stage 9)
+- `js/search.js` (pure) + `js/history.js` (view controller) + `css/search.css`
+  add a **History view** over the persistent archive. The browser fetches
+  `data/db/index.json`, then streams per-day NDJSON files (`mapLimit`, 4
+  workers), unified by id, and filters by date range / category / sources /
+  company / entity / importance with sticky-query pagination. Falls back to the
+  current snapshot when the archive is missing/unreadable.
+- The index maps `id -> {day, source}` and `day -> ids`, keeping the browser
+  from ever scanning `runs/`.
+
+### Trends & signals (Stage 10)
+- `js/trends.js` (pure, dual-loaded) + `js/trends-view.js` (view controller) +
+  `css/trends.css` add a **Trends view**: volume-by-day and radar-score line
+  charts (inline SVG, no chart library), signal bands, category mix, 7-day vs
+  prior-7-day trending entities, and leaderboards. Ranges `all / 30d / 7d` are
+  computed in-page over the fetched archive (or snapshot fallback), never
+  server-side.
+
+### Pipeline health + archive integrity (Stage 11)
+- `runLog` now writes the run's **per-source statuses** into each `runs/<runId>.
+  json` (from `build-news.js` `sourceStatus`, which the snapshot reuses so the
+  two can never disagree) **and** a capped **`runs[]` summary** (`RUNS_INDEX_LIMIT
+  = 120`, idempotent by `runId`) into `index.json` — giving the static site run
+  history without any directory listing.
+- `js/pipeline-ops.js` (pure, dual-loaded) exposes `classify`, `runStatus`
+  (error > degraded > ok), `summarizeRun`, `summarizeSources`, `latestRun`,
+  `runHealthHistory` (newest-first, capped, read-only).
+- `js/pipeline-view.js` + `css/pipeline.css` + the 🔧 Pipeline toggle render the
+  4th exclusive view: degradation banner, last-build card, per-source health
+  chips (ok / empty / error with `errorType`), and a runs table. Sources of run
+  history come from the latest `runs/` file; falls back to the committed
+  snapshot when `runs[]` is empty (e.g. before the next CI build).
+- `scripts/cleanup-archive.js` is the one-time, idempotent archive repair
+  described under Stage 5 above (8 stale rows were repaired on the live repo).
+- Frontend-only surfacing (per the approved scope): no feed remediation, no new
+  sources, no schema change (`schemaVersion` stays `"1.0"`), no Stage 12 work.
+
 ### Empty/zero-state handling (Stage 1)
 - "Today" with no published stories (e.g. early in the day) no longer shows a
   confusing zero page: a notice explains it and the most recent 48h of stories
@@ -250,9 +305,9 @@ chips come from sources/sources.json. data/db/ is written by the Node pipeline
   so existing filters, search, date grouping, source display and tests remain
   intact — **no frontend redesign** in Stage 3.
 
-### Testing (Stage 1 + Stage 2 + Stage 3 + Stage 4 + Stage 5 + Stage 6 + Stage 7)
+### Testing (Stage 1..11)
 - Node built-in test runner, zero extra dependencies: `npm test`
-  (`node --test tests/*.test.js`), **116 tests** (Stage 1 identity/empty-state +
+  (`node --test tests/*.test.js`), **190 tests** (Stage 1 identity/empty-state +
   Stage 2 config/parser/pipeline + Stage 3 canonical schema incl. RSS/Atom/RDF,
   URL tracking, timestamps, stable ids, validation, multi-source + Stage 4
   similarity clustering / false-positive guards / source aggregation /
@@ -264,7 +319,12 @@ chips come from sources/sources.json. data/db/ is written by the Node pipeline
   monotonicity / weight blend / multi-source bonus / legacy 0-5 score + Stage 7
   summarization / extractive determinism / title-only + short-input handling /
   sentence boundaries / takeaway + length limits / idempotency / provenance /
-  anti-hallucination / LLM success, malformed, failure + extractive fallback).
+  anti-hallucination / LLM success, malformed, failure + extractive fallback +
+  Stage 8 dashboard layout/data invariants + Stage 9 search determinism/filters/
+  pagination + Stage 10 trends aggregate windows/trending/determinism + Stage 11
+  re-bucket repair, archive integrity (`assertNoDuplicateIds`, `removeFromDay`,
+  `removeStory`), runs-index idempotency + 120 cap, and the `pipeline-ops`
+  pure-module behavior).
 - Run in CI before the snapshot is regenerated, and on every relevant code push.
 - Browser-level smoke checks are run locally (jsdom harness) before pushing.
 - Snapshot verification runs at build time: every generated story is validated
@@ -276,9 +336,9 @@ chips come from sources/sources.json. data/db/ is written by the Node pipeline
   separate even when a human would call them the same event; a broader
   classifier/LLM could recover them in a later stage.
 - History is stored in `data/db` with a **90-day retention** and grows with each
-  run, but the current live frontend still reads only `data/news.json` — the
-  dashboard changes to read history come in Stage 8, and cross-day search in
-  Stage 9.
+  run. Stages 8-11 read it live (dashboard from snapshot, history search +
+  trends + pipeline views from the archive), but no frontend yet shows
+  cross-day "radars" for companies/models/research (roadmap item 10).
 - Categories/entities and the Radar Score are deterministic keyword/lexicon
   heuristics (Stage 6) — not learned classifiers. They prefer false negatives
   and could be refined with an LLM later.
@@ -341,16 +401,18 @@ CONFIG / SECRETS / TESTS / DOCS
 5. ~~`store.js` persistence -> per-day NDJSON + index, idempotent upserts, CI writes~~ **done** (implemented in `scripts/pipeline/store.js`, `data/db/`, 90-day retention)
 6. ~~`classify.js` (12 categories) + entities + transparent `score.js` Radar Score~~ **done** (implemented in `scripts/pipeline/classify.js` + `scripts/pipeline/score.js`; 12-class subcategory, lexicons, 0-100 explainable Radar Score with stored components)
 7. ~~`summarize.js` extractive + optional LLM path~~ **done** (implemented in `scripts/pipeline/summarize.js`; deterministic extractive default, opt-in LLM via encrypted `AI_API_KEY`, provenance label `ai.method`, anti-fabrication + fail-safe fallback, idempotent)
-8. Dashboard rebuild (Top Stories w/ score, stats, trends, detail modal)
-9. Search across history + filters (date / category / source / company / importance)
-10. Company/Model/Research/Global radars + automation logging + full docs + SEO
+8. ~~Dashboard rebuild (Top Stories w/ score, stats, trends, detail modal)~~ **done** (implemented in `js/dashboard.js` + `js/app.js`; top-signal hero, live client-side filtering, inline `<details>` — no modal)
+9. ~~Search across history + filters (date / category / source / company / importance)~~ **done** (implemented in `js/search.js` + `js/history.js` over `data/db`)
+10. Company/Model/Research/Global radars + ~~automation logging~~ (Stage 11) + ~~full docs~~ (Stage 11) + SEO
 
 ## 4. Development & testing
 - Run locally: `npm start` (serves at http://localhost:8080, plus `/api/fetch`
   proxy for live fallback debugging).
 - Regenerate the snapshot: `npm run build:news`.
 - Check feeds without writing files: `node scripts/pipeline/ingest.js`.
-- Tests: `npm test` (98 tests).
+- Tests: `npm test` (190 tests).
+- Repair a stale archive (duplicate rows across day buckets, pre-Stage-11):
+  `node scripts/cleanup-archive.js`.
 - Push triggers the CI pipeline (tests + fresh snapshot + Pages deploy).
 - Full local setup + troubleshooting: [SETUP.md](SETUP.md);
   source catalog/how-to-add: [SOURCES.md](SOURCES.md);

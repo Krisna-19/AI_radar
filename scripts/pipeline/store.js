@@ -9,8 +9,8 @@
  *   the frontend or earlier pipeline stages.
  *
  *   data/db/
- *     runs/<runId>.json       one per pipeline run (log/metadata)
- *     index.json              { format, updatedAt, days, stories }
+ *     runs/<runId>.json       one per pipeline run (log/metadata, incl. sources)
+ *     index.json              { format, updatedAt, days, stories, runs[] }
  *     days/<yyyy-mm-dd>.ndjson  one canonical Story (JSON) per line
  *
  * Design guarantees
@@ -25,6 +25,8 @@
  *
  * Pipeline slot (roadmap 7.store.js):
  *   ... clusterStories (S4) -> store.upsertStories -> store.prune -> snapshot
+ * Stage 11: upsertStories self-heals day-bucket moves, runLog additionally
+ * writes a capped runs[] summary into index.json for the static Pipeline view.
  */
 
 "use strict";
@@ -36,6 +38,7 @@ const Core = require("../../js/shared.js");
 const DEFAULT_DB_DIR = path.join(__dirname, "..", "..", "data", "db");
 const DEFAULT_RETENTION_DAYS = 90;
 const INDEX_FORMAT = 1;
+const RUNS_INDEX_LIMIT = 120;
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ID_RE = /^s[0-9a-f]{8}$/;
@@ -185,8 +188,10 @@ function upsertStories(stories, opts = {}) {
   const dbDir = opts.dbDir || DEFAULT_DB_DIR;
   const now = opts.now == null ? Date.now() : opts.now;
 
-  /* ---- 1. group storable stories by day ---- */
+  /* ---- 1. group storable stories by day; detect day-bucket moves ---- */
   const incomingByDay = new Map(); // day -> Map(id -> story)
+  const idx = loadIndex(dbDir);
+  const moves = new Map(); // id -> previous day when the bucket changes
   let skipped = 0;
   for (const s of stories || []) {
     if (!storable(s)) {
@@ -196,6 +201,30 @@ function upsertStories(stories, opts = {}) {
     const day = storyDay(s);
     if (!incomingByDay.has(day)) incomingByDay.set(day, new Map());
     incomingByDay.get(day).set(s.id, s);
+
+    const prev = idx.stories && idx.stories[s.id];
+    if (prev && prev.day && prev.day !== day && !moves.has(s.id)) {
+      moves.set(s.id, prev.day);
+    }
+  }
+
+  for (const [id, fromDay] of moves) {
+    const kept = readDaySync(dbDir, fromDay).filter((r) => r.id !== id);
+    if (kept.length) {
+      writeDaySync(dbDir, fromDay, kept);
+    } else {
+      try {
+        fs.unlinkSync(dayFile(dbDir, fromDay));
+      } catch (e) {
+        /* best effort */
+      }
+    }
+    const dayEntry = idx.days && idx.days[fromDay];
+    if (dayEntry) {
+      dayEntry.stories = dayEntry.stories.filter((x) => x !== id);
+      dayEntry.count = dayEntry.stories.length;
+      if (!dayEntry.stories.length) delete idx.days[fromDay];
+    }
   }
 
   /* ---- 2+3. merge each day and rewrite NDJSON ---- */
@@ -232,8 +261,7 @@ function upsertStories(stories, opts = {}) {
     stats.total += mergedArr.length;
   }
 
-  /* ---- 4. persist/refresh the index ---- */
-  const idx = loadIndex(dbDir);
+  /* ---- 4. refresh the index (reusing the map loaded in step 1) + save ---- */
   idx.updatedAt = new Date(now).toISOString();
   for (const [day, incomingMap] of incomingByDay) {
     for (const story of incomingMap.values()) {
@@ -302,6 +330,83 @@ function prune(dbDir, opts = {}) {
   return { prunedDays: removed, prunedStories, cutoffDay };
 }
 
+function removeFromDay(dbDir, id, day) {
+  dbDir = dbDir || DEFAULT_DB_DIR;
+  if (typeof id !== "string" || !ID_RE.test(id) || !DAY_RE.test(day)) return false;
+  const existing = readDaySync(dbDir, day);
+  const kept = existing.filter((r) => r.id !== id);
+  if (kept.length === existing.length) return false;
+  if (kept.length) {
+    writeDaySync(dbDir, day, kept);
+  } else {
+    try {
+      fs.unlinkSync(dayFile(dbDir, day));
+    } catch (e) {
+      /* best effort */
+    }
+  }
+  const idx = loadIndex(dbDir);
+  const dayEntry = idx.days && idx.days[day];
+  if (dayEntry) {
+    dayEntry.stories = dayEntry.stories.filter((x) => x !== id);
+    dayEntry.count = dayEntry.stories.length;
+    if (!dayEntry.stories.length) delete idx.days[day];
+  }
+  saveIndex(dbDir, idx);
+  return true;
+}
+
+/* Remove a story entirely: from its indexed day bucket, the id map and the
+ * per-day id lists. Returns true if the story was found and removed. */
+function removeStory(dbDir, id) {
+  dbDir = dbDir || DEFAULT_DB_DIR;
+  if (typeof id !== "string" || !ID_RE.test(id)) return false;
+  const idx = loadIndex(dbDir);
+  const meta = idx.stories && idx.stories[id];
+  if (!meta) return false;
+  const existing = readDaySync(dbDir, meta.day);
+  const kept = existing.filter((r) => r.id !== id);
+  if (kept.length) {
+    writeDaySync(dbDir, meta.day, kept);
+  } else {
+    try {
+      fs.unlinkSync(dayFile(dbDir, meta.day));
+    } catch (e) {
+      /* best effort */
+    }
+  }
+  const dayEntry = idx.days && idx.days[meta.day];
+  if (dayEntry) {
+    dayEntry.stories = dayEntry.stories.filter((x) => x !== id);
+    dayEntry.count = dayEntry.stories.length;
+    if (!dayEntry.stories.length) delete idx.days[meta.day];
+  }
+  delete idx.stories[id];
+  saveIndex(dbDir, idx);
+  return true;
+}
+
+function assertNoDuplicateIds(dbDir) {
+  dbDir = dbDir || DEFAULT_DB_DIR;
+  const idDays = new Map();
+  let checked = 0;
+  for (const day of listDayFolders(dbDir)) {
+    for (const rec of readDaySync(dbDir, day)) {
+      checked++;
+      if (!rec || !rec.id) continue;
+      if (!idDays.has(rec.id)) idDays.set(rec.id, new Set());
+      idDays.get(rec.id).add(day);
+    }
+  }
+  const duplicates = [];
+  for (const [id, days] of idDays) {
+    const list = Array.from(days).sort();
+    if (list.length > 1) duplicates.push({ id, days: list });
+  }
+  duplicates.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return { checked, duplicates };
+}
+
 /* Read all stories archived under a specific UTC day (YYYY-MM-DD). */
 function readDay(dbDir, day) {
   return readDaySync(dbDir || DEFAULT_DB_DIR, day);
@@ -366,6 +471,44 @@ function runLog(dbDir, record, opts = {}) {
 
   fs.mkdirSync(runsDir(dbDir), { recursive: true });
   fs.writeFileSync(runsFile(dbDir, runId), JSON.stringify(body));
+
+  /* Stage 11: keep a capped, idempotent summary of recent runs inside
+   * index.json so the static site can list run history without a directory
+   * listing. Sources are the per-feed statuses of the run. */
+  const idx = loadIndex(dbDir);
+  if (!Array.isArray(idx.runs)) idx.runs = [];
+  const src = Array.isArray(record.sources) ? record.sources : null;
+  let sourcesOk = 0;
+  let sourcesWarning = 0;
+  let sourcesError = 0;
+  if (src) {
+    for (const s of src) {
+      const status = s && s.status;
+      if (status === "error") sourcesError++;
+      else if (status === "empty" || (status && status !== "ok")) sourcesWarning++;
+      else sourcesOk++;
+    }
+  }
+  const summary = {
+    runId,
+    createdAt: body.createdAt,
+    startedAt: body.startedAt,
+    finishedAt: body.finishedAt,
+    stored: typeof body.stored === "number" ? body.stored : null,
+    upserted: typeof body.upserted === "number" ? body.upserted : null,
+    storedDays: typeof body.storedDays === "number" ? body.storedDays : null,
+    radarMean: typeof body.radarMean === "number" ? body.radarMean : null,
+    summarized: typeof body.summarized === "number" ? body.summarized : null,
+    sourcesOk,
+    sourcesWarning,
+    sourcesError,
+    degraded: sourcesError + sourcesWarning > 0,
+  };
+  idx.runs = idx.runs.filter((r) => r && r.runId !== runId);
+  idx.runs.push(summary);
+  if (idx.runs.length > RUNS_INDEX_LIMIT) idx.runs = idx.runs.slice(-RUNS_INDEX_LIMIT);
+  saveIndex(dbDir, idx);
+
   return runId;
 }
 
@@ -408,6 +551,9 @@ module.exports = {
   listDayFolders,
   upsertStories,
   prune,
+  removeFromDay,
+  removeStory,
+  assertNoDuplicateIds,
   readDay,
   readById,
   recent,

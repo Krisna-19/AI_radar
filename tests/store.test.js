@@ -304,3 +304,157 @@ test("storyDay uses publishedAt then discoveredAt; storable requires a valid id"
   assert.strictEqual(Store.storable({ ...noPub, id: "BAD" }), false);
   assert.strictEqual(Store.storable(null), false);
 });
+
+/* ---------------- 11: Stage 11 - re-bucket repair ---------------- */
+
+test("upsertStories: a story that moves day buckets leaves no stale row behind", () => {
+  const dir = tempDir();
+  try {
+    const keep = story("Stays behind", "https://x.example/keep", "2026-09-02T00:00:00Z", { nowMs: NOW });
+    Store.upsertStories([keep], { dbDir: dir, now: NOW });
+    // Same title+link, newer publishedAt -> same id, day bucket changes.
+    const moved = story("Heat pump drones", "https://x.example/drone", "2026-09-02T10:00:00Z", { nowMs: NOW });
+    Store.upsertStories([moved], { dbDir: dir, now: NOW });
+    assert.strictEqual(Store.readDay(dir, "2026-09-02").length, 2);
+
+    const rePublish = story("Heat pump drones", "https://x.example/drone", "2026-09-03T10:00:00Z", { nowMs: NOW + 86400000 });
+    assert.strictEqual(rePublish.id, moved.id, "same title+link must keep the same id");
+    const r = Store.upsertStories([rePublish], { dbDir: dir, now: NOW + 86400000 });
+
+    assert.strictEqual(r.upserted, 1); // fresh insert into the new bucket
+    // The stale copy must be purged from 2026-09-02; only the keeper remains there.
+    assert.strictEqual(Store.readDay(dir, "2026-09-02").length, 1);
+    assert.strictEqual(Store.readDay(dir, "2026-09-02")[0].id, keep.id);
+    // The story now lives exclusively in the new bucket.
+    assert.strictEqual(Store.readDay(dir, "2026-09-03").length, 1);
+    const rec = Store.readById(dir, moved.id);
+    assert.strictEqual(rec.publishedAt, rePublish.publishedAt);
+    assert.deepStrictEqual(Store.assertNoDuplicateIds(dir).duplicates, []);
+    assert.strictEqual(Store.readDay(dir, "2026-09-02").length, 1);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test("upsertStories: a lone moved story also removes its emptied old day file", () => {
+  const dir = tempDir();
+  try {
+    const s1 = story("Solo story", "https://x.example/solo", "2026-09-02T01:00:00Z", { nowMs: NOW });
+    Store.upsertStories([s1], { dbDir: dir, now: NOW });
+    const s1b = story("Solo story", "https://x.example/solo", "2026-09-03T01:00:00Z", { nowMs: NOW + 86400000 });
+    Store.upsertStories([s1b], { dbDir: dir, now: NOW + 86400000 });
+
+    assert.deepStrictEqual(Store.listDayFolders(dir), ["2026-09-03"]);
+    assert.deepStrictEqual(Store.assertNoDuplicateIds(dir).duplicates, []);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test("removeFromDay: purges a stale row without touching the indexed home", () => {
+  const dir = tempDir();
+  try {
+    const a = story("Story A", "https://x.example/a", "2026-09-02T01:00:00Z", { nowMs: NOW });
+    const b = story("Story B", "https://x.example/b", "2026-09-03T01:00:00Z", { nowMs: NOW });
+    Store.upsertStories([a, b], { dbDir: dir, now: NOW });
+
+    // Fabricate the pre-Stage-11 corruption: B's row lingers in A's day file.
+    const dayA = Store.dayFile(dir, "2026-09-02");
+    fs.appendFileSync(dayA, JSON.stringify(b) + "\n");
+    const dup = Store.assertNoDuplicateIds(dir);
+    assert.deepStrictEqual(dup.duplicates, [{ id: b.id, days: ["2026-09-02", "2026-09-03"] }]);
+
+    assert.strictEqual(Store.removeFromDay(dir, b.id, "2026-09-02"), true);
+    assert.deepStrictEqual(Store.assertNoDuplicateIds(dir).duplicates, []);
+    assert.strictEqual(Store.readDay(dir, "2026-09-02").length, 1); // A survives
+    assert.strictEqual(Store.readDay(dir, "2026-09-02")[0].id, a.id);
+    assert.strictEqual(Store.readById(dir, b.id).id, b.id); // indexed home intact
+    assert.strictEqual(Store.removeFromDay(dir, b.id, "2026-09-02"), false); // idempotent
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test("removeStory: removes a story entirely from day file + index", () => {
+  const dir = tempDir();
+  try {
+    const a = story("Story A", "https://x.example/a", "2026-09-02T01:00:00Z", { nowMs: NOW });
+    Store.upsertStories([a, story("Story C", "https://x.example/c", "2026-09-03T01:00:00Z", { nowMs: NOW })], { dbDir: dir, now: NOW });
+
+    assert.strictEqual(Store.removeStory(dir, a.id), true);
+    assert.strictEqual(Store.readById(dir, a.id), null);
+    assert.strictEqual(Store.readDay(dir, "2026-09-02").length, 0);
+    assert.deepStrictEqual(Store.listDayFolders(dir), ["2026-09-03"]);
+    assert.strictEqual(Store.stats(dir).storyCount, 1);
+    assert.strictEqual(Store.removeStory(dir, a.id), false); // already gone
+  } finally {
+    cleanup(dir);
+  }
+});
+
+/* ---------------- 12: Stage 11 - runs index + sources ---------------- */
+
+test("runLog: writes sources into the run file and a summary into index.json.runs", () => {
+  const dir = tempDir();
+  try {
+    const sources = [
+      { id: "openai", name: "OpenAI", status: "ok", itemCount: 10 },
+      { id: "arxiv", name: "arXiv", status: "empty", itemCount: 0 },
+      { id: "venturebeat", name: "VentureBeat", status: "error", errorType: "http" },
+    ];
+    const runId = Store.runLog(
+      dir,
+      { startedAt: new Date(NOW).toISOString(), normalized: 20, stored: 18, sources, prunedDays: 0 },
+      { now: NOW }
+    );
+
+    const file = JSON.parse(fs.readFileSync(Store.runsFile(dir, runId), "utf8"));
+    assert.deepStrictEqual(file.sources, sources);
+
+    const indexRec = Store.loadIndex(dir);
+    assert.strictEqual(indexRec.runs.length, 1);
+    assert.strictEqual(indexRec.runs[0].runId, runId);
+    assert.strictEqual(indexRec.runs[0].sourcesOk, 1);
+    assert.strictEqual(indexRec.runs[0].sourcesWarning, 1);
+    assert.strictEqual(indexRec.runs[0].sourcesError, 1);
+    assert.strictEqual(indexRec.runs[0].degraded, true);
+    assert.strictEqual(indexRec.runs[0].stored, 18);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test("runLog: identical input yields one idempotent index entry", () => {
+  const dir = tempDir();
+  try {
+    const rec = { startedAt: new Date(NOW).toISOString(), stored: 5, sources: [{ id: "openai", status: "ok" }] };
+    const runId1 = Store.runLog(dir, rec, { now: NOW });
+    const runId2 = Store.runLog(dir, rec, { now: NOW });
+
+    assert.strictEqual(runId1, runId2, "same record + same clock -> deterministic runId");
+    const indexRec = Store.loadIndex(dir);
+    assert.strictEqual(indexRec.runs.length, 1);
+    assert.strictEqual(Store.listRuns(dir).length, 1);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test("runLog: runs index is capped at RUNS_INDEX_LIMIT", () => {
+  const dir = tempDir();
+  try {
+    const n = 130;
+    for (let i = 0; i < n; i++) {
+      Store.runLog(dir, { startedAt: new Date(NOW + i * 1000).toISOString(), stored: i, sources: [] }, { now: NOW + i * 1000 });
+    }
+    const indexRec = Store.loadIndex(dir);
+    assert.strictEqual(indexRec.runs.length, 120);
+    const oldest = indexRec.runs[0];
+    const newest = indexRec.runs[indexRec.runs.length - 1];
+    assert.strictEqual(oldest.stored, n - 120); // oldest-kept run
+    assert.strictEqual(newest.stored, n - 1); // newest run survived
+    assert.strictEqual(Store.listRuns(dir).length, n); // log files all kept on disk
+  } finally {
+    cleanup(dir);
+  }
+});

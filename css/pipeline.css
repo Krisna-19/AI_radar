@@ -1,0 +1,237 @@
+body.pipeline-active .toolbar,
+body.pipeline-active .top-stories,
+body.pipeline-active .news {
+  display: none;
+}
+
+body.history-active .pipeline-view,
+body.trends-active .pipeline-view {
+  display: none !important;
+}
+
+body.pipeline-active .history-view,
+body.pipeline-active .trends-view {
+  display: none !important;
+}
+
+.pipeline-view .panel {
+  margin: 2px 0 18px;
+}
+
+.pipeline-status {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+
+.pipeline-banner {
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin: 0 0 14px;
+  font-size: 0.86rem;
+  line-height: 1.6;
+}
+
+.pipeline-banner strong {
+  color: var(--text);
+}
+
+.banner-error {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+}
+
+.banner-warn {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.run-title {
+  font-size: 0.86rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  color: var(--text);
+}
+
+.run-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.run-stat {
+  flex: 1 1 120px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+
+.run-stat b {
+  display: block;
+  font-size: 1.1rem;
+  color: var(--accent);
+  line-height: 1.25;
+  word-break: break-word;
+}
+
+.run-stat span {
+  font-size: 0.68rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.status-chip {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 2px 9px;
+  white-space: nowrap;
+}
+
+.chip-ok {
+  color: #22d3a5;
+  background: rgba(34, 211, 165, 0.12);
+}
+
+.chip-warn {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.chip-error {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.12);
+}
+
+.health-chips {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.health-chip {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: 0.82rem;
+}
+
+.health-chip b {
+  display: block;
+  margin-bottom: 3px;
+}
+
+.health-chip span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  word-break: break-word;
+}
+
+.health-chip.chip-ok {
+  border-color: rgba(34, 211, 165, 0.4);
+}
+
+.health-chip.chip-ok b {
+  color: #22d3a5;
+}
+
+.health-chip.chip-warn {
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+.health-chip.chip-warn b {
+  color: #f59e0b;
+}
+
+.health-chip.chip-error {
+  border-color: rgba(248, 113, 113, 0.4);
+}
+
+.health-chip.chip-error b {
+  color: #f87171;
+}
+
+.health-legend {
+  margin-top: 9px;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+.run-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.run-table th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.run-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.run-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.btn-pipeline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(14, 165, 233, 0.4);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.btn-pipeline:hover {
+  background: rgba(14, 165, 233, 0.12);
+}
+
+.btn-pipeline.active {
+  background: #0ea5e9;
+  color: #fff;
+}
+
+@media (max-width: 560px) {
+  .run-stat {
+    flex: 1 1 100%;
+  }
+
+  .btn-pipeline {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .run-table {
+    font-size: 0.72rem;
+  }
+
+  .run-table th,
+  .run-table td {
+    padding: 5px 4px;
+  }
+}

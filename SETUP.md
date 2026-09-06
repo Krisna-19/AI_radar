@@ -50,7 +50,7 @@ dependency) and falls back to extraction on any failure. In CI, provide
 ## 4. Tests
 
 ```bash
-npm test           # node --test tests/*.test.js  (expect 116/116)
+npm test           # node --test tests/*.test.js  (expect 190/190)
 ```
 
 Covers Stage 1 (identity keys, empty states), Stage 2 (source config validation,
@@ -65,7 +65,11 @@ determinism; Radar Score: weight blend, component monotonicity, multi-source
 bonus, 0-100 range, legacy 0-5 alias) and Stage 7 (summarization: extractive
 determinism, title-only/short-input handling, sentence boundaries, takeaway +
 length limits, idempotency, provenance label, anti-hallucination, LLM success /
-malformed / failure + extractive fallback).
+malformed / failure + extractive fallback), Stage 8 (dashboard data invariants),
+Stage 9 (history search filters/ordering/determinism), Stage 10 (trends
+aggregate windows, trending, determinism) and Stage 11 (archive re-bucket
+repair, `assertNoDuplicateIds`/`removeFromDay`/`removeStory`, runs-index
+idempotency + cap, `pipeline-ops` behavior).
 Tests are also run in CI on every code push before the snapshot is regenerated.
 
 ## 5. Rebuild the news snapshot
@@ -83,7 +87,9 @@ entities, `tags`, a refined legacy top-5 `category`) and **scores** (Stage 6:
 explainable 0-100 `radarScore` with stored components), **summarizes** (Stage 7:
 extractive `ai.summary` + `ai.keyTakeaways`, with an optional labeled LLM path),
 **persists a copy of each staged story into `data/db/`** (per-day NDJSON +
-`index.json`, idempotent, with a 90-day retention prune), and writes
+`index.json`, idempotent, with a 90-day retention prune), writes the per-source
+statuses into the run log (`runs/<runId>.json` + a capped `runs[]` summary in
+`index.json` for the Pipeline view), and writes
 `data/news.json`. It **aborts with exit code 1** if the source config is invalid
 or zero items survive. The final line reports normalized vs rejected counts plus
 Stage 4-7 numbers (e.g. `Saved 2689 unique stories … (normalized 2694, rejected
@@ -119,5 +125,6 @@ Nothing else is required — the snapshot file is the database, GitHub is the ho
 | A feed prints `[ERROR] … HTTP 403/429` | Feed is blocking bots / rate-limited. Set `HTTP_USER_AGENT` in `.env` or reduce fetch frequency; never bypass a 403 aggressively. |
 | `[WARN] … 0 items` | Legitimate empty feed (e.g. nothing published recently). Valid. |
 | `data/db/` grows | Expected — Stage 5 keeps per-day history. `build-news.js` auto-prunes archives older than the 90-day retention window on every run. |
+| `node scripts/cleanup-archive.js` reports repairs | Stale rows left by a pre-Stage-11 re-bucket (same id in two day files). Safe to run any time — idempotent; a clean archive is a no-op. |
 | `node scripts/pipeline/ingest.js` exits 1 | All configured sources failed. Check network, `.env`, and `HTTP_USER_AGENT`. |
 | Snapshot sites hold stale data | CI regenerates every 3 h; check the Actions run, then trigger *Refresh AI Radar news snapshot* → **Run workflow**.

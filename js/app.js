@@ -697,6 +697,7 @@
     activateView: function (name) {
       document.body.classList.toggle("history-active", name === "history");
       document.body.classList.toggle("trends-active", name === "trends");
+      document.body.classList.toggle("pipeline-active", name === "pipeline");
     },
   };
 

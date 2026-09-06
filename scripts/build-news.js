@@ -45,6 +45,17 @@ async function main() {
   const report = await ingestAll(SRC.enabledSources, { concurrency: CONCURRENCY });
   report.logs.forEach((l) => console.log(l));
 
+  // Per-source health used by BOTH the run log (Stage 11 automation logging)
+  // and the snapshot so the two never disagree.
+  const sourceStatus = report.results.map((r) => ({
+    id: r.source.id,
+    name: r.source.name,
+    status: r.ok ? r.status : "error",
+    itemCount: r.itemCount,
+    errorType: r.errorType,
+    responseMs: r.responseMs,
+  }));
+
   // Stage 3: validate every normalized canonical story; log + drop rejections
   // (never silently). Valid stories proceed to dedupe.
   const valid = [];
@@ -107,6 +118,7 @@ async function main() {
     upserted: stored.upserted,
     updated: stored.updated,
     unchanged: stored.unchanged,
+    sources: sourceStatus,
     prunedDays: pruned.prunedDays.length,
     prunedStories: pruned.prunedStories,
     classifiedCategories: Object.keys(stage6.stats.categories).length,
@@ -152,14 +164,7 @@ async function main() {
           summarizedExtractive: summarized.stats.extractive,
           summarizedLlm: summarized.stats.llm,
         }),
-        sources: report.results.map((r) => ({
-          id: r.source.id,
-          name: r.source.name,
-          status: r.ok ? r.status : "error",
-          itemCount: r.itemCount,
-          errorType: r.errorType,
-          responseMs: r.responseMs,
-        })),
+        sources: sourceStatus,
         items,
       },
       null,
