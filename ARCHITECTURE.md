@@ -305,9 +305,9 @@ chips come from sources/sources.json. data/db/ is written by the Node pipeline
   so existing filters, search, date grouping, source display and tests remain
   intact — **no frontend redesign** in Stage 3.
 
-### Testing (Stage 1..11)
+### Testing (Stage 1..12)
 - Node built-in test runner, zero extra dependencies: `npm test`
-  (`node --test tests/*.test.js`), **190 tests** (Stage 1 identity/empty-state +
+  (`node --test tests/*.test.js`), **220 tests** (Stage 1 identity/empty-state +
   Stage 2 config/parser/pipeline + Stage 3 canonical schema incl. RSS/Atom/RDF,
   URL tracking, timestamps, stable ids, validation, multi-source + Stage 4
   similarity clustering / false-positive guards / source aggregation /
@@ -324,9 +324,14 @@ chips come from sources/sources.json. data/db/ is written by the Node pipeline
   pagination + Stage 10 trends aggregate windows/trending/determinism + Stage 11
   re-bucket repair, archive integrity (`assertNoDuplicateIds`, `removeFromDay`,
   `removeStory`), runs-index idempotency + 120 cap, and the `pipeline-ops`
-  pure-module behavior).
+  pure-module behavior + Stage 12 publisher-suffix identity stripping /
+  `assertIdentityConsistent` / `rekeyArchive` merge-re-key sweep / pure radar
+  slugs, routes, entity sets, stats, related-entity and chip-group resolution).
 - Run in CI before the snapshot is regenerated, and on every relevant code push.
-- Browser-level smoke checks are run locally (jsdom harness) before pushing.
+- Browser-level smoke checks are run locally (fake-DOM harness) before pushing,
+  covering the radar deep-link boot, global + entity routes, toggle round-trip,
+  view-exclusivity and per-route SEO; the smoke harness serves the real
+  `data/db` archive.
 - Snapshot verification runs at build time: every generated story is validated
   against the schema and the counts are reported.
 
@@ -336,9 +341,8 @@ chips come from sources/sources.json. data/db/ is written by the Node pipeline
   separate even when a human would call them the same event; a broader
   classifier/LLM could recover them in a later stage.
 - History is stored in `data/db` with a **90-day retention** and grows with each
-  run. Stages 8-11 read it live (dashboard from snapshot, history search +
-  trends + pipeline views from the archive), but no frontend yet shows
-  cross-day "radars" for companies/models/research (roadmap item 10).
+  run. Stages 8-12 read it live (dashboard from snapshot; history search,
+  trends, pipeline and radar views from the archive).
 - Categories/entities and the Radar Score are deterministic keyword/lexicon
   heuristics (Stage 6) — not learned classifiers. They prefer false negatives
   and could be refined with an LLM later.
@@ -403,16 +407,42 @@ CONFIG / SECRETS / TESTS / DOCS
 7. ~~`summarize.js` extractive + optional LLM path~~ **done** (implemented in `scripts/pipeline/summarize.js`; deterministic extractive default, opt-in LLM via encrypted `AI_API_KEY`, provenance label `ai.method`, anti-fabrication + fail-safe fallback, idempotent)
 8. ~~Dashboard rebuild (Top Stories w/ score, stats, trends, detail modal)~~ **done** (implemented in `js/dashboard.js` + `js/app.js`; top-signal hero, live client-side filtering, inline `<details>` — no modal)
 9. ~~Search across history + filters (date / category / source / company / importance)~~ **done** (implemented in `js/search.js` + `js/history.js` over `data/db`)
-10. Company/Model/Research/Global radars + ~~automation logging~~ (Stage 11) + ~~full docs~~ (Stage 11) + SEO
+10. ~~Company/Model/Research/Global radars + automation logging~~ **done** (Stage 11 pipeline health view; Stage 12 per-entity Radar under `#/radar/…`, single fragment owner `js/router.js`, curated publisher-suffix identity in `js/shared.js`, one-time archive re-key/merge sweep via `scripts/rekey-archive.js`, integrity gate in `scripts/build-news.js`, per-route SEO in `js/seo.js`)
+
+## 3b. Stage 12 notes: identity, integrity, radar routing
+
+- **Identity:** `js/shared.js::cleanTitleForIdentity` strips a trailing
+  publication suffix (e.g. `- TechCrunch`, `· WIRED`) ONLY on an exact
+  word-normalized match against the curated 149-entry `PUBLISHER_ALIASES`
+  manifest; otherwise titles are preserved verbatim. `normalizeItem` keys
+  story `id`/`title`/`fingerprint` on the cleaned identity, so the same story
+  from "AI News" and "AI News - VentureBeat" now dedupes and re-keys into ONE
+  archive row, and cross-day duplicates collapse.
+- **Integrity gate:** `scripts/build-news.js` fails the build
+  (exit code 1, no snapshot commit) if the archive contains duplicate ids or
+  identity-mismatched rows (same clean id, different raw titles) — so a future
+  curator mistake breaks CI instead of silently corrupting the archive.
+- **One-time sweep:** `node scripts/rekey-archive.js [--dry-run] [--backup DIR] data/db`
+  merges same-url duplicates (newest wins), re-keys suffix-stripped titles and
+  re-days them; idempotent + backups. Applied stage 12: 1546 → 1488 rows
+  (215 re-keyed, 58 merged, 0 danger, 0 collisions, 0 duplicate ids).
+- **Routing:** the radar feature owns the hash. `js/router.js` is the ONLY
+  hash reader: radar paths → `AIRadarRadarView.show(route)`, anything else →
+  `hide()`; non-radar view activation clears a lingering radar fragment via
+  `history.replaceState`. `js/radar.js` (pure) derives entity sets, per-entity
+  story windows and related entities over the archive; 404-ish entities show a
+  "browse all" fallback. SEO (`js/seo.js`) swaps title/description/OG/canonical
+  per route and restores site defaults on exit.
 
 ## 4. Development & testing
 - Run locally: `npm start` (serves at http://localhost:8080, plus `/api/fetch`
   proxy for live fallback debugging).
 - Regenerate the snapshot: `npm run build:news`.
 - Check feeds without writing files: `node scripts/pipeline/ingest.js`.
-- Tests: `npm test` (190 tests).
+- Tests: `npm test` (220 tests).
 - Repair a stale archive (duplicate rows across day buckets, pre-Stage-11):
   `node scripts/cleanup-archive.js`.
+- Preview an identity sweep (Stage 12): `node scripts/rekey-archive.js --dry-run data/db`.
 - Push triggers the CI pipeline (tests + fresh snapshot + Pages deploy).
 - Full local setup + troubleshooting: [SETUP.md](SETUP.md);
   source catalog/how-to-add: [SOURCES.md](SOURCES.md);

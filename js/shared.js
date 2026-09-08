@@ -47,12 +47,230 @@
   }
 
   /*
-   * Stable identity helpers.
-   * A story's identity is derived from its normalised title and canonical URL,
-   * so the same story maps to the same key/id across runs, sources and days.
-   * This is the foundation for idempotent pipeline runs (upserts) and for
-   * cross-run deduplication ("Reported by N sources").
+   * Stage 12 identity hardening helpers.
+   *
+   * Some feeds (notably Google News) append the reporting publisher to the
+   * headline as a trailing suffix ("… - Reuters", "… | The Washington Post",
+   * "… - cnbc.com"). Because a story's stable id/fingerprint are derived from
+   * the NORMALISED TITLE, one article reported by two aggregator copies can
+   * end up with two different identities ("… - Nature" vs "… - nature.com"),
+   * which splits one story across the archive and the radar pages.
+   *
+   * The fix is deliberately CONSERVATIVE and DETERMINISTIC:
+   *   - A trailing section is removed ONLY when it exactly (case-insensitively,
+   *     word-normalised) matches a name or site host of a KNOWN, curated
+   *     publisher in PUBLISHER_ALIASES. No fuzzy publisher guessing, ever.
+   *   - If there is no exact alias match the original title is preserved
+   *     verbatim (prefers false negatives, so two unrelated stories can never
+   *     collapse merely because their titles are similar).
+   *   - Identity stays cleanTitle | canonicalUrl (host + first 2 path
+   *     segments), so two different articles on the same site keep different
+   *     ids even after any suffix strip.
    */
+
+  /* A trailing section is any text after ONE separator character
+   * (- – — | · :) surrounded by optional whitespace. Doubled separators
+   * (" - - ") are tolerated. The head text before it is captured greedily so
+   * the RIGHTMOST separator is the split point. */
+  const TRAILING_ALIAS_RE = /^(.+)[ \t]*[-–—|·:][ \t\-–—|·:]*(.+?)[ \t]*$/;
+
+  /* Curated manifest of known publishers whose title suffixes may be stripped.
+   * `name` is the display name; `hosts` are site hosts that also appear as
+   * title suffixes. Every entry is a real, identifiable publisher. Seeded from
+   * sources/sources.json plus the trailing-title histogram of the archived
+   * data/db corpus; extended only by explicit curation (never automatically). */
+  const PUBLISHER_ALIASES = [
+    /* ---- the 13 configured sources (source of truth: sources/sources.json) ---- */
+    { name: "OpenAI", hosts: ["openai.com"] },
+    { name: "Google DeepMind", hosts: ["deepmind.google", "deepmind.com"] },
+    { name: "Google AI", hosts: ["blog.google"] },
+    { name: "Google Research", hosts: ["research.google", "research.google.com"] },
+    { name: "Hugging Face", hosts: ["huggingface.co", "huggingface.com"] },
+    { name: "arXiv", hosts: ["arxiv.org"] },
+    { name: "Nature Mach. Intel.", hosts: ["nature.com"] },
+    { name: "Nature", hosts: ["nature.com"] },
+    { name: "MIT Tech Review", hosts: ["technologyreview.com"] },
+    { name: "MIT Technology Review", hosts: ["technologyreview.com"] },
+    { name: "VentureBeat", hosts: ["venturebeat.com"] },
+    { name: "The Verge", hosts: ["theverge.com"] },
+    { name: "WIRED", hosts: ["wired.com"] },
+    { name: "TechCrunch", hosts: ["techcrunch.com"] },
+    /* ---- major outlets observed as suffixes in the archived corpus ---- */
+    { name: "Yahoo Finance", hosts: ["finance.yahoo.com", "uk.finance.yahoo.com", "ca.finance.yahoo.com"] },
+    { name: "Yahoo Finance UK", hosts: ["uk.finance.yahoo.com", "finance.yahoo.com"] },
+    { name: "Yahoo News", hosts: ["news.yahoo.com", "ca.news.yahoo.com", "uk.news.yahoo.com"] },
+    { name: "Yahoo News Canada", hosts: ["ca.news.yahoo.com"] },
+    { name: "The New York Times", hosts: ["nytimes.com"] },
+    { name: "NYT", hosts: ["nytimes.com"] },
+    { name: "Reuters", hosts: ["reuters.com", "thomsonreuters.com"] },
+    { name: "Thomson Reuters", hosts: ["thomsonreuters.com", "reuters.com"] },
+    { name: "CNBC", hosts: ["cnbc.com"] },
+    { name: "Politico", hosts: ["politico.com"] },
+    { name: "The Washington Post", hosts: ["washingtonpost.com"] },
+    { name: "Washington Post", hosts: ["washingtonpost.com"] },
+    { name: "CBS News", hosts: ["cbsnews.com"] },
+    { name: "NBC News", hosts: ["nbcnews.com"] },
+    { name: "BBC", hosts: ["bbc.com", "bbc.co.uk"] },
+    { name: "ABC News", hosts: ["abcnews.com", "abcnews.go.com"] },
+    { name: "CBC", hosts: ["cbc.ca"] },
+    { name: "The Guardian", hosts: ["theguardian.com"] },
+    { name: "Guardian", hosts: ["theguardian.com"] },
+    { name: "PBS", hosts: ["pbs.org"] },
+    { name: "The Wall Street Journal", hosts: ["wsj.com"] },
+    { name: "Wall Street Journal", hosts: ["wsj.com"] },
+    { name: "WSJ", hosts: ["wsj.com"] },
+    { name: "Financial Times", hosts: ["ft.com"] },
+    { name: "The Economist", hosts: ["economist.com"] },
+    { name: "Bloomberg", hosts: ["bloomberg.com"] },
+    { name: "Bloomberg.com", hosts: ["bloomberg.com"] },
+    { name: "The Atlantic", hosts: ["theatlantic.com"] },
+    { name: "The Los Angeles Times", hosts: ["latimes.com"] },
+    { name: "Los Angeles Times", hosts: ["latimes.com"] },
+    { name: "USA Today", hosts: ["usatoday.com", "usatoday.com"] },
+    { name: "The Motley Fool", hosts: ["fool.com"] },
+    { name: "Motley Fool", hosts: ["fool.com"] },
+    { name: "The Globe and Mail", hosts: ["theglobeandmail.com"] },
+    { name: "South China Morning Post", hosts: ["scmp.com"] },
+    { name: "SCMP", hosts: ["scmp.com"] },
+    { name: "Nikkei Asia", hosts: ["asia.nikkei.com", "nikkei.com"] },
+    { name: "Al Jazeera", hosts: ["aljazeera.com"] },
+    { name: "The Times of India", hosts: ["timesofindia.com", "timesofindia.indiatimes.com"] },
+    { name: "Futurism", hosts: ["futurism.com"] },
+    { name: "Gizmodo", hosts: ["gizmodo.com"] },
+    { name: "InfoWorld", hosts: ["infoworld.com"] },
+    { name: "Computerworld", hosts: ["computerworld.com"] },
+    { name: "Network World", hosts: ["networkworld.com"] },
+    { name: "The Next Web", hosts: ["thenextweb.com"] },
+    { name: "PYMNTS", hosts: ["pymnts.com"] },
+    { name: "Radiology Business", hosts: ["radiologybusiness.com"] },
+    { name: "Cardiovascular Business", hosts: ["cardiovascularbusiness.com"] },
+    { name: "GovTech", hosts: ["govtech.com"] },
+    { name: "The Harvard Crimson", hosts: ["thecrimson.com"] },
+    { name: "EIN News", hosts: ["einnews.com", "einpresswire.com"] },
+    { name: "EIN Presswire", hosts: ["einpresswire.com"] },
+    { name: "StartupHub.ai", hosts: ["startuphub.ai"] },
+    { name: "EurekAlert", hosts: ["eurekalert.org"] },
+    { name: "MIT News", hosts: ["news.mit.edu"] },
+    { name: "NIST", hosts: ["nist.gov"] },
+    { name: "National Institute of Standards and Technology", hosts: ["nist.gov"] },
+    { name: "WBAY", hosts: ["wbay.com"] },
+    { name: "MSSP Alert", hosts: ["msspalert.com"] },
+    { name: "ExecutiveGov", hosts: ["executivegov.com"] },
+    { name: "Wealth Management", hosts: ["wealthmanagement.com"] },
+    { name: "McKinsey", hosts: ["mckinsey.com"] },
+    { name: "McKinsey & Company", hosts: ["mckinsey.com"] },
+    { name: "Tom's Hardware", hosts: ["tomsguidance.com", "tomsfan.com", "tomsguide.com"] },
+    { name: "Tom's Hardware", hosts: ["tomsguidance.com"] },
+    { name: "Amazon", hosts: ["amazon.com", "aws.amazon.com"] },
+    { name: "AWS", hosts: ["aws.amazon.com"] },
+    { name: "Amazon Web Services", hosts: ["amazon.com", "aws.amazon.com"] },
+    { name: "The Detroit News", hosts: ["detroitnews.com"] },
+    { name: "Newsday", hosts: ["newsday.com"] },
+    { name: "Cointelegraph", hosts: ["cointelegraph.com"] },
+    { name: "Decrypt", hosts: ["decrypt.co"] },
+    { name: "The Hacker News", hosts: ["thehackernews.com"] },
+    { name: "VentureBeat", hosts: ["venturebeat.com"] },
+    { name: "Phys.org", hosts: ["phys.org"] },
+    { name: "ScienceDaily", hosts: ["sciencedaily.com"] },
+    { name: "News-Medical", hosts: ["news-medical.net"] },
+    { name: "CancerNetwork", hosts: ["cancernetwork.com"] },
+    { name: "Scientific American", hosts: ["scientificamerican.com"] },
+    { name: "New Scientist", hosts: ["newscientist.com"] },
+    { name: "WIRED", hosts: ["wired.com"] },
+    { name: "Ars Technica", hosts: ["arstechnica.com"] },
+    { name: "Engadget", hosts: ["engadget.com"] },
+    { name: "The Verge", hosts: ["theverge.com"] },
+    { name: "TechCrunch", hosts: ["techcrunch.com"] },
+    { name: "Mashable", hosts: ["mashable.com"] },
+    { name: "Fast Company", hosts: ["fastcompany.com"] },
+    { name: "Fortune", hosts: ["fortune.com"] },
+    { name: "Forbes", hosts: ["forbes.com"] },
+    { name: "Business Insider", hosts: ["businessinsider.com"] },
+    { name: "Barron's", hosts: ["barrons.com"] },
+    { name: "MarketWatch", hosts: ["marketwatch.com"] },
+    { name: "Yahoo", hosts: ["yahoo.com"] },
+    { name: "Silicon Valley Business Journal", hosts: ["bizjournals.com"] },
+    { name: "Boston Globe", hosts: ["bostonglobe.com"] },
+    { name: "Chicago Tribune", hosts: ["chicagotribune.com"] },
+    { name: "Miami Herald", hosts: ["miamiherald.com"] },
+    { name: "Dallas Morning News", hosts: ["dallasnews.com"] },
+    { name: "Seattle Times", hosts: ["seattletimes.com"] },
+    { name: "NPR", hosts: ["npr.org"] },
+    { name: "PBS NewsHour", hosts: ["pbs.org"] },
+    { name: "AP", hosts: ["apnews.com"] },
+    { name: "Associated Press", hosts: ["apnews.com"] },
+    { name: "UPI", hosts: ["upi.com"] },
+    { name: "HuffPost", hosts: ["huffpost.com"] },
+    { name: "The Hill", hosts: ["thehill.com"] },
+    { name: "Axios", hosts: ["axios.com"] },
+    { name: "Business Insider", hosts: ["businessinsider.com"] },
+    { name: "Quartz", hosts: ["qz.com"] },
+    { name: "Snopes", hosts: ["snopes.com"] },
+    { name: "Ground News", hosts: ["ground.news"] },
+    { name: "The Daily Upside", hosts: ["thedailyupside.com"] },
+    { name: "The Information", hosts: ["theinformation.com"] },
+    { name: "Semafor", hosts: ["semafor.com"] },
+    { name: "PopSci", hosts: ["popsci.com"] },
+    { name: "Discover Magazine", hosts: ["discovermagazine.com"] },
+    { name: "Wired", hosts: ["wired.com"] },
+    { name: "The Register", hosts: ["theregister.com"] },
+    { name: "Dark Reading", hosts: ["darkreading.com"] },
+    { name: "BleepingComputer", hosts: ["bleepingcomputer.com"] },
+    { name: "SecurityWeek", hosts: ["securityweek.com"] },
+    { name: "SC Media", hosts: ["scmagazine.com"] },
+    { name: "Threatpost", hosts: ["threatpost.com"] },
+    { name: "CyberScoop", hosts: ["cyberscoop.com"] },
+    { name: "Recorded Future", hosts: ["recordedfuture.com"] },
+    { name: "Yahoo Finance AU", hosts: ["au.finance.yahoo.com"] },
+    { name: "Benzinga", hosts: ["benzinga.com"] },
+    { name: "Investopedia", hosts: ["investopedia.com"] },
+    { name: "Motley Fool", hosts: ["fool.com"] },
+    { name: "Stocktwits", hosts: ["stocktwits.com"] },
+    { name: "MarketBeat", hosts: ["marketbeat.com"] },
+    { name: "Seeking Alpha", hosts: ["seekingalpha.com"] },
+    { name: "TipRanks", hosts: ["tipranks.com"] },
+    { name: "Simply Wall St", hosts: ["simplywall.st"] },
+    { name: "3G Media", hosts: [] },
+  ];
+
+  /* Normalised lookup of every alias (names + hosts) -> canonical display name
+   * for the strip rule. Built once. */
+  const PUBLISHER_ALIAS_LOOKUP = (function () {
+    const map = Object.create(null);
+    const add = function (raw) {
+      const norm = normalizeTitle(raw);
+      if (norm && !map[norm]) map[norm] = true;
+    };
+    for (const p of PUBLISHER_ALIASES) {
+      add(p.name);
+      for (const h of p.hosts || []) add(h);
+    }
+    return map;
+  })();
+
+  /* Strip a trailing publisher-alias suffix. Returns { title, publisher } where
+   * publisher is the matched canonical name (or null). The title is preserved
+   * verbatim whenever no exact alias match is found. Deterministic. */
+  function cleanTitleForIdentity(title) {
+    let t = String(title == null ? "" : title).trim();
+    if (!t) return { title: t, publisher: null };
+    let matchedName = null;
+    for (let round = 0; round < 3; round++) {
+      const m = TRAILING_ALIAS_RE.exec(t);
+      if (!m) break;
+      const tail = m[2].trim();
+      const norm = normalizeTitle(tail);
+      if (!norm || norm.length < 2 || !PUBLISHER_ALIAS_LOOKUP[norm]) break;
+      let head = m[1].trim();
+      /* Doubled separators ("… - - Reuters") leave a dangling separator on the
+       * head; drop any residual trailing separator after a successful strip. */
+      head = head.replace(/\s*[-–—|·:]+\s*$/g, "").trim();
+      if (!head) break;
+      t = head;
+      if (matchedName === null) matchedName = norm;
+    }
+    return { title: t, publisher: matchedName };
+  }
 
   function canonicalUrlKey(url) {
     if (!url) return "";
@@ -378,7 +596,15 @@
     const raw = rawItem || {};
     const nowMs = opts.nowMs == null ? Date.now() : opts.nowMs;
 
-    const title = normalizeText(raw.title) || "Untitled";
+    const rawTitle = normalizeText(raw.title) || "Untitled";
+    /* Stage 12: strip a trailing publisher-alias suffix ("… - Reuters") so the
+     * same article fetches one stable identity regardless of which aggregator
+     * copy carried it. The original full title fans out below for display. */
+    const cleaned = cleanTitleForIdentity(rawTitle);
+    const title =
+      cleaned.title && cleaned.title.trim() && cleaned.title.trim().length
+        ? cleaned.title.trim()
+        : rawTitle;
     const description = normalizeText(raw.description);
     const originalUrl = normalizeText(raw.link) || "";
     const canonicalUrl = canonicalizeUrl(originalUrl) || originalUrl;
@@ -558,6 +784,8 @@
     normalizeArray,
     normalizeItem,
     validateStory,
+    PUBLISHER_ALIASES,
+    cleanTitleForIdentity,
   };
 
   if (typeof module !== "undefined" && module.exports) module.exports = api;

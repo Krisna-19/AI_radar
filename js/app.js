@@ -691,13 +691,27 @@
       state.page = 1;
       renderAll();
     },
-    /* Stage 9: allow the History search view to activate/deactivate itself.
-     * Toggling a body class lets CSS switch which section is shown; the live
-     * feed logic itself is never touched. */
+    /* Stage 9+12: allow the secondary views (History search, Trends, Pipeline,
+     * Radar) to activate/deactivate themselves. Exactly ONE view class is
+     * active at a time (the current live feed has none). Toggling a body
+     * class lets CSS switch which section is shown; the live feed logic itself
+     * is never touched. */
     activateView: function (name) {
-      document.body.classList.toggle("history-active", name === "history");
-      document.body.classList.toggle("trends-active", name === "trends");
-      document.body.classList.toggle("pipeline-active", name === "pipeline");
+      const names = ["history", "trends", "pipeline", "radar"];
+      const active = names.indexOf(name) !== -1 ? name : null;
+      for (const v of names) {
+        document.body.classList.toggle(v + "-active", v === active);
+      }
+      /* Single hash owner: when a non-radar view takes over, drop any radar
+       * fragment without triggering another hashchange round-trip. */
+      if (
+        active !== "radar" &&
+        window.AIRadarRadar &&
+        typeof window.AIRadarRadar.isRadarHash === "function" &&
+        window.AIRadarRadar.isRadarHash(location.hash || "")
+      ) {
+        window.AIRadarRadar.clearHash();
+      }
     },
   };
 

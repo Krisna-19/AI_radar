@@ -108,6 +108,31 @@ async function main() {
   const runStartedAt = new Date(started).toISOString();
   const stored = Store.upsertStories(items);
   const pruned = Store.prune(Store.DEFAULT_DB_DIR, { retentionDays: Store.DEFAULT_RETENTION_DAYS });
+
+  // Stage 12: hard integrity gates on the ARCHIVE (post-upsert, pre-log).
+  // A single duplicate id OR any identity-mismatched row (id != clean-title
+  // identity) fails the build so the deployed data can never drift from the
+  // radar identity rules. The one-time data/db re-key sweep (rekey-archive.js)
+  // restored these invariants once at migration time.
+  const dupIds = Store.assertNoDuplicateIds(Store.DEFAULT_DB_DIR);
+  const identity = Store.assertIdentityConsistent(Store.DEFAULT_DB_DIR);
+  if (dupIds.duplicates.length || identity.inconsistent.length) {
+    console.log(
+      `[ERROR] archive integrity gate failed (rows=${identity.checked}): ` +
+        `duplicate-id groups=${dupIds.duplicates.length} (each must be 0), ` +
+        `identity-mismatched=${identity.inconsistent.length} (each must be 0).`
+    );
+    for (const d of dupIds.duplicates.slice(0, 20)) console.log(`  dup id ${d.id}: ${d.days.join(", ")}`);
+    for (const i of identity.inconsistent.slice(0, 20)) {
+      console.log(`  mismatched ${i.id} (${i.day}) -> ${i.cleanId}: "${(i.title || "").slice(0, 80)}"`);
+    }
+    process.exitCode = 1;
+    return;
+  }
+  console.log(
+    `[OK] archive integrity gate passed (${identity.checked} rows, 0 duplicate ids, identity-consistent).`
+  );
+
   const runId = Store.runLog(Store.DEFAULT_DB_DIR, {
     startedAt: runStartedAt,
     normalized: report.allItems.length,

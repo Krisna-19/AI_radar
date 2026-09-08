@@ -151,6 +151,14 @@ field it mirrors):
 - **Arrays** — always `[]` unless provided as an actual array (`normalizeArray`).
 - **Identity** — `fingerprint = canonicalKey(title, originalUrl)`,
   `id = "s" + djb2(fingerprint)`. Unchanged from Stage 1.
+  Stage 12 added **identity hardening**: `normalizeItem` keys the title on
+  `cleanTitleForIdentity(title)` — the title with a trailing publication
+  suffix removed ONLY when it matches the curated `PUBLISHER_ALIASES` manifest
+  (e.g. `- TechCrunch`, `· WIRED`, `– VentureBeat`). `id`, `fingerprint` and
+  the dedupe path use that clean identity, so one story across two outlets
+  collapses to a single canonical row; the suffix is kept in the stored title
+  only when it is NOT a curated publisher (no fuzzy guessing, markets like
+  "AI News - U.S." or parenthetical products stay intact).
 
 ---
 

@@ -284,8 +284,9 @@
         "</div>";
     };
 
-    /* Wire delegated clicks on entity chips that live anywhere in #news-grid,
-     * forwarding the token to the host search (if set via AIRadarHooks). */
+    /* Wire delegated clicks on entity chips that live anywhere in #news-grid.
+     * Stage 12: if the token resolves to an entity in the radar index, hop to
+     * its #/radar/<group>/<slug> page; otherwise fall back to search. */
     api.attach = function () {
       const grid = document.getElementById("news-grid");
       if (!grid) return;
@@ -294,6 +295,19 @@
         if (!btn) return;
         const token = btn.dataset.token;
         if (!token) return;
+        const Radar = window.AIRadarRadar;
+        if (Radar && typeof Radar.groupOfToken === "function") {
+          const records =
+            (window.AIRadarRadar.getIndex && window.AIRadarRadar.getIndex()) ||
+            (window.AIRadarHooks.getState && window.AIRadarHooks.getState().items) ||
+            [];
+          const group = Radar.groupOfToken(records, token);
+          if (group) {
+            const url = Radar.radarUrl(group, token);
+            if (location.hash !== url) location.hash = url;
+            return;
+          }
+        }
         if (window.AIRadarHooks && typeof window.AIRadarHooks.setSearch === "function") {
           window.AIRadarHooks.setSearch(token);
         }

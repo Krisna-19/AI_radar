@@ -1,0 +1,284 @@
+/* AI RADAR - Stage 12: Radar view (per-entity pages via #/radar/...). */
+
+/* View exclusivity: while the radar view is active, the live feed chrome is
+ * hidden; and whichever other view is active hides the radar section. Mirrors
+ * the trends.css/pipeline.css pattern so the four views cannot overlap. */
+body.radar-active .toolbar,
+body.radar-active .top-stories,
+body.radar-active .news {
+  display: none;
+}
+
+body.history-active .radar-view,
+body.trends-active .radar-view,
+body.pipeline-active .radar-view {
+  display: none !important;
+}
+
+body.radar-active .history-view,
+body.radar-active .trends-view,
+body.radar-active .pipeline-view {
+  display: none !important;
+}
+
+.btn-radar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.btn-radar:hover {
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.btn-radar.active {
+  background: #10b981;
+  color: #fff;
+}
+
+@media (max-width: 560px) {
+  .btn-radar {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+.radar-status {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+
+.radar-hero {
+  margin: 0 0 16px;
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+
+.radar-hero b {
+  color: var(--text);
+}
+
+.radar-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin: 0 0 18px;
+}
+
+.radar-group-column {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+
+.radar-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.radar-group-count {
+  font-size: 0.72rem;
+  color: var(--muted);
+  background: rgba(148, 163, 184, 0.12);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.radar-entity-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px;
+  border-radius: 10px;
+  color: var(--text);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.07);
+  transition: background 0.12s ease;
+}
+
+.radar-entity-row:hover {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.radar-entity-icon {
+  font-size: 1rem;
+  width: 26px;
+  text-align: center;
+  flex: 0 0 26px;
+}
+
+.radar-entity-icon.big {
+  font-size: 1.8rem;
+  width: 44px;
+  flex: 0 0 44px;
+}
+
+.radar-entity-name {
+  flex: 1 1 auto;
+  font-weight: 600;
+  font-size: 0.92rem;
+  word-break: break-word;
+}
+
+.radar-entity-metrics {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.radar-entity-count {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.radar-muted {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 6px 0;
+}
+
+.radar-entity-banner {
+  margin: 0 0 14px;
+}
+
+.radar-back {
+  display: inline-block;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.85rem;
+  margin: 0 0 10px;
+}
+
+.radar-back:hover {
+  color: var(--accent);
+}
+
+.radar-entity-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 8px;
+}
+
+.radar-entity-head h2 {
+  margin: 0;
+  font-size: 1.7rem;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.radar-entity-type {
+  display: inline-block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #58e0b6;
+  background: rgba(16, 185, 129, 0.15);
+  border-radius: 999px;
+  padding: 2px 10px;
+  margin-top: 4px;
+}
+
+.radar-entity-stats {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin: 0 0 12px;
+}
+
+.radar-entity-stats b {
+  color: var(--text);
+}
+
+.radar-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin: 0 0 12px;
+}
+
+.radar-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 6px;
+}
+
+.radar-score {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #58e0b6;
+  background: rgba(16, 185, 129, 0.12);
+  border-radius: 999px;
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+
+.radar-card-title {
+  margin: 0 0 6px;
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+.radar-card-title a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.radar-card-title a:hover {
+  color: var(--accent);
+}
+
+.radar-card-desc {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.radar-card-meta {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+.radar-card-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 0;
+}
+
+.radar-card-chips .entity-chip {
+  font-size: 0.74rem;
+  padding: 3px 10px;
+}
+
+.radar-related {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 18px;
+}

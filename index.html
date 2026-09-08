@@ -17,6 +17,7 @@
     <link rel="stylesheet" href="css/search.css" />
     <link rel="stylesheet" href="css/trends.css" />
     <link rel="stylesheet" href="css/pipeline.css" />
+    <link rel="stylesheet" href="css/radar.css" />
   </head>
   <body>
     <canvas id="bg"></canvas>
@@ -106,6 +107,14 @@
             aria-pressed="false"
           >
             🔧 Pipeline
+          </button>
+          <button
+            type="button"
+            id="radar-toggle"
+            class="btn-radar"
+            aria-pressed="false"
+          >
+            📡 Radar
           </button>
         </div>
       </section>
@@ -263,6 +272,20 @@
 
         <div id="pipeline-empty" class="state-box" style="display: none"></div>
       </section>
+
+      <section id="radar-view" class="radar-view" style="display: none">
+        <h2 id="radar-title" class="section-title"><span>📡</span> Radar</h2>
+        <p id="radar-subtitle" class="history-intro">
+          One page per company, model and research topic across the archive.
+        </p>
+
+        <div id="radar-status" class="radar-status" role="status"></div>
+        <div id="radar-error" class="state-box error-box" style="display: none"></div>
+
+        <div id="radar-body"></div>
+
+        <div id="radar-empty" class="state-box" style="display: none"></div>
+      </section>
     </main>
 
     <footer class="site-footer">
@@ -287,5 +310,9 @@
     <script src="js/trends-view.js"></script>
     <script src="js/pipeline-ops.js"></script>
     <script src="js/pipeline-view.js"></script>
+    <script src="js/radar.js"></script>
+    <script src="js/seo.js"></script>
+    <script src="js/radar-view.js"></script>
+    <script src="js/router.js"></script>
   </body>
 </html>

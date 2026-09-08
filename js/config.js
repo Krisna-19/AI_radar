@@ -47,6 +47,10 @@ function dbDayFileUrl(day) {
   return "data/db/days/" + day + ".ndjson";
 }
 
+/* Stage 12: fragment prefix for the per-entity Radar routes
+ * (#/radar/global, #/radar/company|model|research/<slug>). */
+const RADAR_ROUTE_PREFIX = "#/radar";
+
 const CATEGORIES = [
   { id: "research", label: "Research & Papers", icon: "🧠" },
   { id: "product", label: "Products & Launches", icon: "🚀" },
@@ -54,6 +58,13 @@ const CATEGORIES = [
   { id: "policy", label: "Policy & Safety", icon: "⚖️" },
   { id: "news", label: "General AI News", icon: "📰" },
 ];
+
+/* Browser: classic scripts share consts lexically, but not as window
+ * properties - surface the constants radar/trends look up via window. */
+if (typeof window !== "undefined") {
+  window.CATEGORIES = CATEGORIES;
+  window.RADAR_ROUTE_PREFIX = RADAR_ROUTE_PREFIX;
+}
 
 if (typeof module !== "undefined" && module.exports) {
   // Node: load the canonical source list (validated) for the snapshot pipeline.
@@ -68,5 +79,6 @@ if (typeof module !== "undefined" && module.exports) {
     FETCH_TIMEOUT_MS,
     SNAPSHOT_PATH,
     SEARCH_DB_INDEX_PATH,
+    RADAR_ROUTE_PREFIX,
   };
 }

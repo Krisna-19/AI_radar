@@ -547,10 +547,26 @@
       els.grid.addEventListener("click", (e) => {
         const chip = e.target.closest(".entity-chip");
         if (!chip || !chip.dataset.token) return;
+        const token = chip.dataset.token;
+        /* Stage 12: prefer the entity's radar page when it resolves exactly
+         * (the archive is always loaded here); else fall back to history
+         * filtering / global search. */
+        const Radar = window.AIRadarRadar;
+        if (Radar && typeof Radar.groupOfToken === "function") {
+          const records = state.records.length
+            ? state.records
+            : (Radar.getIndex && Radar.getIndex()) || [];
+          const group = Radar.groupOfToken(records, token);
+          if (group) {
+            const url = Radar.radarUrl(group, token);
+            if (location.hash !== url) location.hash = url;
+            return;
+          }
+        }
         if (els.company) {
-          els.company.value = chip.dataset.token;
+          els.company.value = token;
         } else if (window.AIRadarHooks && typeof window.AIRadarHooks.setSearch === "function") {
-          window.AIRadarHooks.setSearch(chip.dataset.token);
+          window.AIRadarHooks.setSearch(token);
         }
         resetPage();
         render();

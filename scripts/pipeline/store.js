@@ -407,6 +407,274 @@ function assertNoDuplicateIds(dbDir) {
   return { checked, duplicates };
 }
 
+/* Stage 12: verify every archived row's stable id still matches its identity
+ * after cleaning a trailing publisher-alias suffix from the title
+ * ("… - Reuters" -> clean title). This is the invariant the one-time rekey
+ * sweep restores and the pipeline build re-checks on every run. */
+function assertIdentityConsistent(dbDir) {
+  dbDir = dbDir || DEFAULT_DB_DIR;
+  const inconsistent = [];
+  let checked = 0;
+  for (const day of listDayFolders(dbDir)) {
+    for (const rec of readDaySync(dbDir, day)) {
+      if (!rec) continue;
+      checked++;
+      const url = rec.originalUrl || rec.link || "";
+      const clean = Core.cleanTitleForIdentity(rec.title);
+      const cleanTitle = clean.title && clean.title.trim() ? clean.title.trim() : rec.title;
+      const cleanId = Core.buildStoryId(cleanTitle, url);
+      if (rec.id !== cleanId) {
+        inconsistent.push({ id: rec.id, cleanId, day, title: rec.title, url });
+      }
+    }
+  }
+  inconsistent.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return { checked, inconsistent };
+}
+
+/* Stage 12 one-time archive sweep: re-key every archived row onto the CLEAN
+ * identity (id derived from the stripped title) and collapse duplicate copies
+ * of the same story (same canonical url) that were previously filed under
+ * different dirty-title ids.
+ *
+ * Safety rules (hard constraints):
+ *   - rows are merged ONLY when they share the SAME clean id AND the SAME
+ *     canonical url key. Different real stories are NEVER collapsed.
+ *   - the surviving record for a merged group is deterministic (newest
+ *     updatedAt, then longest description, then id asc) and is filed under its
+ *     own home day (publishedAt, else discoveredAt).
+ *   - when a clean id group mixes different url keys, only the largest
+ *     same-url subgroup is merged; every other row keeps its LEGACY id in
+ *     place and is reported as a "danger" (never silently dropped).
+ *   - idempotent: re-running on an already-clean archive is a no-op.
+ *
+ * opts.now     injected clock (default Date.now()).
+ * opts.write   false forces a dry run (nothing is written, index included).
+ *
+ * Returns { inputRows, inputDays, outputDays, unchanged, rekeyed, merged,
+ *           moved, danger, dangerIds, idCollisions, removedDays }.
+ */
+function rekeyArchive(dbDir, opts = {}) {
+  dbDir = dbDir || DEFAULT_DB_DIR;
+  const now = opts.now == null ? Date.now() : opts.now;
+  const write = opts.write !== false;
+
+  const days = listDayFolders(dbDir);
+  const entries = [];
+  for (const day of days) {
+    for (const rec of readDaySync(dbDir, day)) {
+      if (!rec || !rec.id) continue;
+      entries.push({ day, rec });
+    }
+  }
+
+  /* ---- 1. derive the clean identity for every row ---- */
+  for (const e of entries) {
+    const url = e.rec.originalUrl || e.rec.link || "";
+    const clean = Core.cleanTitleForIdentity(e.rec.title);
+    const title = clean.title && clean.title.trim() ? clean.title.trim() : e.rec.title;
+    e.url = url;
+    e.cleanTitle = title;
+    e.cleanId = Core.buildStoryId(title, url);
+    e.unchanged = e.rec.id === e.cleanId;
+  }
+
+  /* ---- 2. group rows by clean id ---- */
+  const byClean = new Map();
+  for (const e of entries) {
+    if (!byClean.has(e.cleanId)) byClean.set(e.cleanId, []);
+    byClean.get(e.cleanId).push(e);
+  }
+
+  const urlKey = (url) => Core.canonicalUrlKey(url) || url || "";
+
+  function pickWinner(members) {
+    return members
+      .slice()
+      .sort((a, b) => {
+        const ta = +new Date(a.rec.updatedAt || a.rec.createdAt || 0);
+        const tb = +new Date(b.rec.updatedAt || b.rec.createdAt || 0);
+        if (ta !== tb) return tb - ta;
+        const la = (a.rec.description || "").length;
+        const lb = (b.rec.description || "").length;
+        if (la !== lb) return lb - la;
+        return a.rec.id < b.rec.id ? -1 : a.rec.id > b.rec.id ? 1 : 0;
+      })[0];
+  }
+
+  function mergeInto(base, others) {
+    const out = JSON.parse(JSON.stringify(base));
+    const uniq = (arr) => {
+      const seen = new Set();
+      const res = [];
+      for (const v of arr || []) {
+        const key = typeof v === "string" ? v : JSON.stringify(v);
+        if (!seen.has(key)) {
+          seen.add(key);
+          res.push(v);
+        }
+      }
+      return res;
+    };
+    const listFields = ["sources", "relatedStoryIds", "tags", "companies", "people", "models", "technologies", "countries"];
+    for (const o of others) {
+      for (const f of listFields) {
+        const merged = uniq([].concat(out[f] || [], o[f] || []));
+        out[f] = merged;
+      }
+      if (!out.description && o.description) out.description = o.description;
+      if (!out.image && o.image) out.image = o.image;
+      if (!out.author && o.author) out.author = o.author;
+    }
+    if (Array.isArray(out.sources)) out.reportedBy = out.sources.length;
+    return out;
+  }
+
+  /* ---- 3. resolve every clean-id group into keepers / dropped / danger ---- */
+  const keepers = []; // { rec, day, rekeyed, dropped, moved }
+  const danger = [];
+  for (const [cleanId, members] of byClean) {
+    const byUrl = new Map();
+    for (const m of members) {
+      const k = urlKey(m.url);
+      if (!byUrl.has(k)) byUrl.set(k, []);
+      byUrl.get(k).push(m);
+    }
+
+    if (byUrl.size === 1) {
+      const winner = pickWinner(members);
+      const losers = members.filter((m) => m !== winner);
+      const home = storyDay(winner.rec) || winner.day;
+      if (winner.unchanged && losers.length === 0) {
+        keepers.push({ rec: winner.rec, day: winner.day, rekeyed: false, dropped: 0, moved: false });
+      } else {
+        const base = losers.length ? mergeInto(winner.rec, losers.map((l) => l.rec)) : winner.rec;
+        const merged = Object.assign({}, base, {
+          title: winner.cleanTitle,
+          id: cleanId,
+          fingerprint: Core.canonicalKey(winner.cleanTitle, winner.url),
+        });
+        keepers.push({
+          rec: merged,
+          day: home,
+          rekeyed: winner.rec.id !== cleanId,
+          dropped: losers.length,
+          moved: winner.day !== home,
+        });
+      }
+    } else {
+      /* Mixed url keys => NOT all the same story. Merge only the largest
+       * same-url subgroup; every other subgroup keeps its legacy identity. */
+      const subs = Array.from(byUrl.values()).sort((a, b) => b.length - a.length);
+      const [main, ...rest] = subs;
+      const winner = pickWinner(main);
+      const losers = main.filter((m) => m !== winner);
+      const home = storyDay(winner.rec) || winner.day;
+      const base = losers.length ? mergeInto(winner.rec, losers.map((l) => l.rec)) : winner.rec;
+      const merged = Object.assign({}, base, {
+        title: winner.cleanTitle,
+        id: cleanId,
+        fingerprint: Core.canonicalKey(winner.cleanTitle, winner.url),
+      });
+      keepers.push({
+        rec: merged,
+        day: home,
+        rekeyed: winner.rec.id !== cleanId,
+        dropped: losers.length,
+        moved: winner.day !== home,
+      });
+      for (const stray of rest.flat()) {
+        danger.push({ cleanId, rec: stray.rec, day: stray.day });
+      }
+    }
+  }
+
+  /* ---- 4. assemble final per-day rows ---- */
+  const finalByDay = new Map();
+  const add = (day, rec) => {
+    if (!DAY_RE.test(day)) return;
+    if (!finalByDay.has(day)) finalByDay.set(day, []);
+    finalByDay.get(day).push(rec);
+  };
+  for (const k of keepers) add(k.day, k.rec);
+  for (const d of danger) add(storyDay(d.rec) || d.day, d.rec);
+
+  const idCollisions = [];
+  for (const [day, list] of finalByDay) {
+    const seen = new Set();
+    const clean = [];
+    for (const rec of list) {
+      if (seen.has(rec.id)) {
+        idCollisions.push({ id: rec.id, day, title: rec.title });
+        continue;
+      }
+      seen.add(rec.id);
+      clean.push(rec);
+    }
+    finalByDay.set(day, clean);
+  }
+
+  const stats = {
+    dbDir,
+    inputRows: entries.length,
+    inputDays: days.length,
+    outputDays: 0,
+    unchanged: keepers.filter((k) => !k.rekeyed && k.dropped === 0 && !k.moved).length,
+    rekeyed: keepers.filter((k) => k.rekeyed).length,
+    merged: keepers.reduce((n, k) => n + (k.dropped || 0), 0),
+    moved: keepers.filter((k) => k.moved).length,
+    danger: danger.length,
+    dangerIds: danger.map((d) => ({ id: d.rec.id, day: d.day, cleanId: d.cleanId, title: d.rec.title })),
+    idCollisions,
+    removedDays: [],
+  };
+
+  if (!write) return stats;
+
+  /* ---- 5. write day files; drop emptied days ---- */
+  for (const day of listDayFolders(dbDir)) {
+    if (!finalByDay.has(day) || !finalByDay.get(day).length) {
+      stats.removedDays.push(day);
+      try {
+        fs.unlinkSync(dayFile(dbDir, day));
+      } catch (e) {
+        /* best effort */
+      }
+    }
+  }
+  for (const [day, recs] of finalByDay) {
+    if (recs.length) writeDaySync(dbDir, day, recs);
+  }
+  stats.outputDays = finalByDay.size;
+
+  /* ---- 6. rebuild index (preserving the capped runs[] summary) ---- */
+  const idx = loadIndex(dbDir);
+  const runs = Array.isArray(idx.runs) ? idx.runs : [];
+  const fresh = emptyIndex();
+  fresh.updatedAt = new Date(now).toISOString();
+  for (const [day, recs] of finalByDay) {
+    for (const rec of recs) {
+      fresh.stories[rec.id] = {
+        updatedAt: rec.updatedAt || new Date(now).toISOString(),
+        day,
+        source: rec.source ? { id: rec.source.id, name: rec.source.name } : { id: null, name: null },
+      };
+    }
+  }
+  fresh.days = {};
+  for (const id of Object.keys(fresh.stories)) {
+    const day = fresh.stories[id].day;
+    if (!fresh.days[day]) fresh.days[day] = { count: 0, stories: [] };
+    fresh.days[day].stories.push(id);
+    fresh.days[day].count = fresh.days[day].stories.length;
+  }
+  for (const day of Object.keys(fresh.days)) fresh.days[day].stories.sort();
+  fresh.runs = runs;
+  saveIndex(dbDir, fresh);
+
+  return stats;
+}
+
 /* Read all stories archived under a specific UTC day (YYYY-MM-DD). */
 function readDay(dbDir, day) {
   return readDaySync(dbDir || DEFAULT_DB_DIR, day);
@@ -554,6 +822,8 @@ module.exports = {
   removeFromDay,
   removeStory,
   assertNoDuplicateIds,
+  assertIdentityConsistent,
+  rekeyArchive,
   readDay,
   readById,
   recent,

@@ -126,5 +126,6 @@ Nothing else is required — the snapshot file is the database, GitHub is the ho
 | `[WARN] … 0 items` | Legitimate empty feed (e.g. nothing published recently). Valid. |
 | `data/db/` grows | Expected — Stage 5 keeps per-day history. `build-news.js` auto-prunes archives older than the 90-day retention window on every run. |
 | `node scripts/cleanup-archive.js` reports repairs | Stale rows left by a pre-Stage-11 re-bucket (same id in two day files). Safe to run any time — idempotent; a clean archive is a no-op. |
+| Build fails with `duplicate ids` / `identity mismatch` | Stage 12 integrity gate in `build-news.js`. Inspect read-only first: `node scripts/rekey-archive.js --dry-run data/db`. A mismatch means the same clean title/URL produced two ids — see [ARCHITECTURE.md](ARCHITECTURE.md) Stage 12 notes. |
 | `node scripts/pipeline/ingest.js` exits 1 | All configured sources failed. Check network, `.env`, and `HTTP_USER_AGENT`. |
 | Snapshot sites hold stale data | CI regenerates every 3 h; check the Actions run, then trigger *Refresh AI Radar news snapshot* → **Run workflow**.
