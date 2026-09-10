@@ -23,6 +23,13 @@
 (function (root) {
   "use strict";
 
+  /* Shared pure helpers for identity/dedup. Browser: window.AIRadarCore;
+   * Node tests: ../js/shared.js. Loaded before this dashboard layer. */
+  const Core =
+    (typeof window !== "undefined" && window.AIRadarCore) ||
+    (typeof require !== "undefined" && require("./shared.js")) ||
+    null;
+
   /* ---------------- Pure helpers (DOM-free, unit-testable) ---------------- */
 
   /* Map radarScore (0..100) to band + hex color + *text label* so the signal is
@@ -74,19 +81,74 @@
     );
   }
 
+  /* Deterministic Levenshtein (edit) distance between two strings. Used only to
+   * decide whether a summary is a near-copy of its headline; NEVER used for
+   * story identity/dedup (that stays URL/canonical-key based). */
+  function levenshtein(a, b) {
+    a = a == null ? "" : String(a);
+    b = b == null ? "" : String(b);
+    const m = a.length;
+    const n = b.length;
+    if (m === 0) return n;
+    if (n === 0) return m;
+    let prev = new Array(n + 1);
+    let cur = new Array(n + 1);
+    for (let j = 0; j <= n; j++) prev[j] = j;
+    for (let i = 1; i <= m; i++) {
+      cur[0] = i;
+      for (let j = 1; j <= n; j++) {
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+      }
+      const tmp = prev;
+      prev = cur;
+      cur = tmp;
+    }
+    return prev[n];
+  }
+
+  /* Similarity ratio in 0..1 (1 - dist/maxLen), matching the classic
+   * Levenshtein ratio. Deterministic. */
+  function levenshteinRatio(a, b) {
+    a = a == null ? "" : String(a);
+    b = b == null ? "" : String(b);
+    const denom = Math.max(a.length, b.length);
+    if (denom === 0) return 1;
+    return 1 - levenshtein(a, b) / denom;
+  }
+
+  const REDUNDANT_SUMMARY_THRESHOLD = 0.85;
+
+  /* A summary is "useful" only if it is a genuinely distinct sentence, not a
+   * near-verbatim copy of the headline. Case-insensitive Levenshtein ratio
+   * above 0.85 is treated as a redundant echo of the title. This is purely a
+   * display decision and never feeds story identity/dedup. */
+  function isRedundantSummary(summary, title) {
+    const s = summary == null ? "" : String(summary).trim();
+    const t = title == null ? "" : String(title).trim();
+    if (!s) return true;
+    if (!t) return false;
+    if (s.toLowerCase() === t.toLowerCase()) return true;
+    return levenshteinRatio(s.toLowerCase(), t.toLowerCase()) > REDUNDANT_SUMMARY_THRESHOLD;
+  }
+
   /* Text to surface as the "AI summary". Prefers a real ai.summary; falls back
-   * to description; returns null only when neither exists. Never substitutes
-   * the title as a fake summary. */
+   * to description when that summary is absent (never fabricated). A candidate
+   * that is missing, empty, invalid, or a near-copy of the title is treated as
+   * unavailable and returns null so the card omits the summary block (no empty
+   * whitespace). */
   function summaryText(item) {
     if (!item) return null;
     const ai = item.ai && typeof item.ai === "object" ? item.ai : null;
+    let cand = null;
     if (ai && typeof ai.summary === "string" && ai.summary.trim()) {
-      return ai.summary.trim();
+      cand = ai.summary.trim();
+    } else if (typeof item.description === "string" && item.description.trim()) {
+      cand = item.description.trim();
     }
-    if (typeof item.description === "string" && item.description.trim()) {
-      return item.description.trim();
-    }
-    return null;
+    if (!cand) return null;
+    if (isRedundantSummary(cand, item.title)) return null;
+    return cand;
   }
 
   function summaryMethod(item) {
@@ -185,6 +247,109 @@
     return best;
   }
 
+  /* Deterministic article identity used for dashboard dedup. The normalized
+   * article URL is the primary key when the item carries a real URL; otherwise
+   * it falls back to the existing canonical identity signature (title + url
+   * bucket), which mirrors Core.buildStoryId/clean identity. Never fuzzy: two
+   * stories collapse only when they share the exact same URL or the exact same
+   * canonical identity key. Distinct real articles (different URLs, even with
+   * similar titles) are always preserved. */
+  function articleIdentity(item) {
+    if (!item) return null;
+    const url = (item && (item.canonicalUrl || item.originalUrl || item.link)) || "";
+    const norm = Core && Core.canonicalizeUrl ? Core.canonicalizeUrl(url) : null;
+    if (norm) return "url:" + norm;
+    return (
+      "key:" +
+      (item.fingerprint ||
+        (Core && Core.canonicalKey ? Core.canonicalKey(item.title, url) : ""))
+    );
+  }
+
+  /* Partition today's stories into mutually exclusive headline sections using
+   * a single radarScore (desc) / publishedAt (desc) ranking consistent with
+   * topSignal, deduplicated by deterministic articleIdentity:
+   *   - topSignal  : the single highest-scoring distinct story
+   *   - topStories : the next 3 highest-scoring distinct stories (never the
+   *                  top signal, never each other)
+   *   - feed       : every remaining distinct story (excludes everything shown
+   *                  in topSignal and topStories, and any same-identity copy)
+   * Returns { topSignal:[story], topStories:[3], feed:[...] }. Deterministic. */
+  function partitionHighlights(items) {
+    const empty = { topSignal: [], topStories: [], feed: [] };
+    if (!items || !items.length) return empty;
+    const sorted = items
+      .slice()
+      .sort((a, b) => {
+        const aS = typeof a.radarScore === "number" ? a.radarScore : -1;
+        const bS = typeof b.radarScore === "number" ? b.radarScore : -1;
+        if (aS !== bS) return bS - aS;
+        const aT = a.publishedAt ? +new Date(a.publishedAt) : 0;
+        const bT = b.publishedAt ? +new Date(b.publishedAt) : 0;
+        return bT - aT;
+      });
+    const seen = new Set();
+    const topSignal = [];
+    const topStories = [];
+    const feed = [];
+    for (const it of sorted) {
+      const id = articleIdentity(it);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      if (!topSignal.length) topSignal.push(it);
+      else if (topStories.length < 3) topStories.push(it);
+      else feed.push(it);
+    }
+    return { topSignal, topStories, feed };
+  }
+
+  /* Deterministic visual decision for a story card (Item 3):
+   *   - category  : the category id used for the accent/class
+   *   - thumbUrl  : the existing archive og:image URL when present, else ""
+   *   - hasThumb  : true only when a usable image URL already exists in the data
+   * Never scrapes/fetches; relies solely on the supplied story fields. */
+  function cardVisual(item) {
+    const category = item && item.category ? String(item.category) : "news";
+    const raw = item && item.image;
+    const thumbUrl =
+      typeof raw === "string" && raw.trim() ? raw.trim() : "";
+    return {
+      category,
+      thumbUrl,
+      hasThumb: Boolean(thumbUrl),
+    };
+  }
+
+  /* Score badge + tooltip markup (Item 4). Pure: takes an escape function so it
+   * is testable in Node and reused by the browser cardEnhancement. Returns ""
+   * when there is no numeric score. The badge itself is unchanged; only its
+   * wrapper gains the CSS hover/focus tooltip + accessible description. */
+  const SCORE_TOOLTIP_TEXT =
+    "Signal Score: weighted by recency, source authority, and topic relevance.";
+  function scoreBadgeHtml(item, esc) {
+    const pct = radarPct(item && item.radarScore);
+    if (pct == null || typeof esc !== "function") return "";
+    const band = radarBand(item.radarScore);
+    const r = 15;
+    const tipId = "dash-score-tip-" + (item && item.id ? String(item.id) : "sig");
+    return (
+      '<div class="score-tip" data-tooltip="' + esc(SCORE_TOOLTIP_TEXT) + '">' +
+      '<svg class="radar" tabindex="0" width="40" height="40" viewBox="0 0 40 40" ' +
+      'role="img" aria-label="' + esc(band.label + " signal " + pct + "%") +
+      '" aria-describedby="' + esc(tipId) + '">' +
+      '<circle class="radar-track" cx="20" cy="18" r="' + r + '" fill="none"/>' +
+      '<path class="radar-val" style="stroke:' + band.color + '" fill="none" ' +
+      'stroke-width="4" stroke-linecap="round" d="' + arcPath(pct, 20, 18, r) + '"/>' +
+      '<text class="radar-num" x="20" y="18" text-anchor="middle" dy=".36em" ' +
+      'style="fill:' + band.color + '">' + pct + "</text>" +
+      "</svg>" +
+      '<span class="score-tip-bubble" id="' + esc(tipId) + '" role="tooltip">' +
+      esc(SCORE_TOOLTIP_TEXT) +
+      "</span>" +
+      "</div>"
+    );
+  }
+
   /* ---------------- Public API (Node tests + browser) ---------------- */
 
   const api = {
@@ -193,10 +358,19 @@
     arcPath,
     summaryText,
     summaryMethod,
+    levenshtein,
+    levenshteinRatio,
+    isRedundantSummary,
+    REDUNDANT_SUMMARY_THRESHOLD,
     collectChips,
     groupBySubcategory,
     windowSlice,
     topSignal,
+    articleIdentity,
+    partitionHighlights,
+    cardVisual,
+    scoreBadgeHtml,
+    SCORE_TOOLTIP_TEXT,
   };
 
   /* ---------------- Browser-only card enhancement string ---------------- */
@@ -218,19 +392,9 @@
       let html = "";
       const pct = radarPct(item.radarScore);
       if (pct != null) {
-        const band = radarBand(item.radarScore);
-        const r = 15;
         html +=
           '<div class="dash-radar-row">' +
-          '<svg class="radar" width="40" height="40" viewBox="0 0 40 40" role="img" aria-label="' +
-          escapeHtml(band.label + " signal " + pct + "%") +
-          '">' +
-          '<circle class="radar-track" cx="20" cy="18" r="' + r + '" fill="none"/>' +
-          '<path class="radar-val" style="stroke:' + band.color + '" fill="none" ' +
-          'stroke-width="4" stroke-linecap="round" d="' + arcPath(pct, 20, 18, r) + '"/>' +
-          '<text class="radar-num" x="20" y="18" text-anchor="middle" dy=".36em" ' +
-          'style="fill:' + band.color + '">' + pct + "</text>" +
-          "</svg>" +
+          scoreBadgeHtml(item, escapeHtml) +
           "</div>";
       }
 

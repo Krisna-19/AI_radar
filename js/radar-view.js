@@ -35,8 +35,10 @@
     active: false,
     loading: false,
     route: { kind: "none" },
+    routeKey: "",
     entity: null,
     range: "all",
+    detail: null,
   };
 
   const RANGES = [
@@ -56,6 +58,39 @@
 
   function categoryMeta(id) {
     return (root.CATEGORIES || []).find((c) => c.id === id) || { label: "News", icon: "📰" };
+  }
+
+  /* Best available story text for summaries/detail. Mirrors the canonical
+   * preference used across the app: a real ai.summary first, then description,
+   * then content. Never substitutes the title as a fake summary. */
+  function summaryTextFor(rec) {
+    if (!rec) return "";
+    const ai = rec.ai && typeof rec.ai === "object" ? rec.ai : null;
+    if (ai && typeof ai.summary === "string" && ai.summary.trim()) return ai.summary.trim();
+    if (typeof rec.description === "string" && rec.description.trim()) return rec.description.trim();
+    if (typeof rec.content === "string" && rec.content.trim()) return rec.content.trim();
+    return "";
+  }
+
+  /* True when the only text we have for a story merely echoes its headline
+   * (a known aggregator artifact) rather than providing a genuine article
+   * body. In that case the "Full story" reader degrades to a soft note
+   * instead of showing a redundant sentence. Comparison strips trailing
+   * " - source" / " — source" appendix noise so echo-titles are caught. */
+  function isRedundantBody(rec, body) {
+    if (!body) return true;
+    const rawTitle = rec && rec.title ? rec.title : "";
+    if (!rawTitle) return false;
+    const norm = (s) => s.replace(/\s+/g, " ").replace(/\s+[-–—]\s*[^-\s][^\s]*$/i, "").trim();
+    const title = norm(rawTitle.toLowerCase());
+    const b = norm(body.toLowerCase());
+    if (!title || !b) return true;
+    const bodyIsTitleSubstring = b.indexOf(title) !== -1;
+    const titleIsBodySubstring = title.indexOf(b) !== -1;
+    const extra = b.length - title.length;
+    if (bodyIsTitleSubstring && extra < 90) return true;
+    if (titleIsBodySubstring && b.length < 40) return true;
+    return false;
   }
 
   function fetchText(url, ms) {
@@ -225,10 +260,17 @@
       models: stats[1].entities.length,
       research: stats[2].entities.length,
     };
+
+    /* If a story detail is open, show it full-width on the global route. */
+    if (state.detail) {
+      return detailHtml(state.detail);
+    }
+
+    /* ---- 0. Editorial header ---- */
     let html =
       '<div class="radar-hero">' +
-      "<p>" +
-      "<b>" +
+      '<h3 class="radar-hero-title">Radar · every slice of the signal</h3>' +
+      "<p class=\"radar-hero-counts\"><b>" +
       totals.stories +
       "</b> stories · <b>" +
       totals.companies +
@@ -236,7 +278,34 @@
       totals.models +
       "</b> models · <b>" +
       totals.research +
-      "</b> research topics</p></div>";
+      "</b> research topics</p>" +
+      "</div>";
+
+    /* ---- 1. PRIMARY: the latest AI intelligence feed ---- */
+    const recent = state.records
+      .slice()
+      .sort(function (a, b) {
+        var da = a.date || a.publishedAt || "";
+        var db = b.date || b.publishedAt || "";
+        return da > db ? -1 : da < db ? 1 : 0;
+      })
+      .slice(0, 20);
+    html +=
+      '<div class="radar-feed-head">' +
+      '<h3 class="radar-feed-title"><span class="radar-feed-sparkle">✨</span> Latest AI Intelligence</h3>' +
+      "</div>";
+    html += '<div class="radar-feed">';
+    html += recent.length
+      ? recent.map((r) => storyCardHtml(r)).join("")
+      : '<div class="state-box">No stories in the archive yet.</div>';
+    html += "</div>";
+
+    /* ---- 2. SECONDARY: entity overview ---- */
+    html +=
+      '<div class="radar-landscape-head">' +
+      '<h3 class="radar-feed-title"><span>📊</span> Explore the AI Landscape</h3>' +
+      "<p class=\"radar-landscape-sub\">Browse coverage by company, model and research topic.</p>" +
+      "</div>";
     html += '<div class="radar-groups">';
     for (const s of stats) {
       html +=
@@ -254,6 +323,7 @@
       html += "</div>";
     }
     html += "</div>";
+
     return html;
   }
 
@@ -277,6 +347,7 @@
       ? new Date(date).toLocaleDateString(undefined, { month: "short", day: "numeric" })
       : "";
     const score = typeof rec.radarScore === "number" ? rec.radarScore : typeof rec.score === "number" ? rec.score * 20 : null;
+    const summary = summaryTextFor(rec).replace(/\s+/g, " ").trim();
     const chips = [];
     if (Array.isArray(rec.companies)) for (const n of rec.companies) chips.push(["company", n]);
     if (Array.isArray(rec.models)) for (const n of rec.models) chips.push(["model", n]);
@@ -291,13 +362,18 @@
       (isWindowed ? "" : "") +
       '" data-cat="' +
       escapeHtml(rec.category || "news") +
-      '">' +
+      '" data-story-id="' +
+      escapeHtml(rec.id || "") +
+      '" tabindex="0" role="button" aria-label="Open story detail">' +
       '<div class="radar-card-top">' +
-      '<span class="badge badge-' +
-      escapeHtml(rec.category || "news") +
-      '">' +
-      escapeHtml(meta.icon + " " + meta.label) +
-      "</span>" +
+      (rec.category
+        ? '<span class="badge badge-' +
+          escapeHtml(rec.category) +
+          '">' +
+          escapeHtml(meta.icon + " " + meta.label) +
+          (rec.subcategory ? " · " + escapeHtml(rec.subcategory) : "") +
+          "</span>"
+        : '<span class="badge">📰 News</span>') +
       (score != null
         ? '<span class="radar-score">Radar ' +
           Math.round(score) +
@@ -305,27 +381,104 @@
         : "") +
       "</div>" +
       '<h4 class="radar-card-title">' +
-      (rec.link && rec.link !== "#"
-        ? '<a href="' +
-          escapeHtml(rec.link) +
-          '" target="_blank" rel="noopener noreferrer">' +
-          escapeHtml(rec.title || "") +
-          "</a>"
-        : escapeHtml(rec.title || "")) +
+      escapeHtml(rec.title || "") +
       "</h4>" +
-      '<p class="radar-card-desc">' +
-      escapeHtml((rec.description || rec.aiSummary || "").slice(0, 240)) +
-      "</p>" +
+      (summary
+        ? '<p class="radar-card-desc">' +
+          escapeHtml(summary.slice(0, 240)) +
+          "</p>"
+        : "") +
       '<div class="radar-card-meta">' +
-      "<span>" +
-      escapeHtml(src) +
-      "</span>" +
-      (when ? "<span>" + when + "</span>" : "") +
+      (src ? '<span class="radar-card-source">' + escapeHtml(src) + "</span>" : "") +
+      (when ? "<span class=\"radar-card-date\">" + when + "</span>" : "") +
       "</div>" +
       (chipHtmlList
         ? '<div class="radar-card-chips">' + chipHtmlList + "</div>"
         : "") +
+      '<span class="radar-card-read">Read full story →</span>' +
       "</article>"
+    );
+  }
+
+  function detailHtml(rec) {
+    const meta = categoryMeta(rec.category);
+    const src = rec.source && rec.source.name ? rec.source.name : rec.sourceName || "";
+    const date = rec.date || rec.publishedAt || "";
+    const fullDate = date
+      ? new Date(date).toLocaleDateString(undefined, {
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        })
+      : "";
+    const score = typeof rec.radarScore === "number" ? rec.radarScore : typeof rec.score === "number" ? rec.score * 20 : null;
+    const body = summaryTextFor(rec).replace(/\s+/g, " ").trim();
+    const redundant = isRedundantBody(rec, body);
+    const chips = [];
+    if (Array.isArray(rec.companies)) for (const n of rec.companies) chips.push(["company", n]);
+    if (Array.isArray(rec.models)) for (const n of rec.models) chips.push(["model", n]);
+    if (Array.isArray(rec.technologies)) for (const n of rec.technologies) chips.push(["research", n]);
+    const chipHtmlList = chips
+      .filter((c) => c[0] !== (state.entity && state.entity.group) || c[1] !== (state.entity && state.entity.name))
+      .slice(0, 12)
+      .map((c) => chipHtml(c[0], c[1]))
+      .join("");
+    const sourceLink =
+      rec.link && rec.link !== "#"
+        ? '<a class="radar-detail-source-link" href="' +
+          escapeHtml(rec.link) +
+          '" target="_blank" rel="noopener noreferrer">Read original source →</a>'
+        : "";
+    const bodyHtml = body && !redundant
+      ? '<div class="radar-detail-story">' +
+        '<div class="radar-detail-section-label">Full story</div>' +
+        '<div class="radar-detail-body"><p>' +
+        escapeHtml(body) +
+        "</p></div></div>"
+      : '<div class="radar-detail-story">' +
+        '<div class="radar-detail-section-label">Full story</div>' +
+        '<div class="radar-detail-body"><p class="radar-muted">Only the headline summary is available for this story in the archive.</p></div></div>';
+    const chipsHtml = chipHtmlList
+      ? '<div class="radar-detail-chips">' +
+        '<span class="radar-detail-chips-label">Entities</span>' +
+        '<div class="radar-detail-chips-row">' +
+        chipHtmlList +
+        "</div></div>"
+      : "";
+    const sourceHtml =
+      '<div class="radar-detail-source">' +
+      (src ? '<span class="radar-detail-source-name">Source: ' + escapeHtml(src) + "</span>" : "") +
+      sourceLink +
+      "</div>";
+    return (
+      '<div class="radar-detail" role="dialog" aria-modal="false" aria-label="Story detail">' +
+      '<div class="radar-detail-nav">' +
+      '<button type="button" class="radar-detail-back" data-close-detail>← Back to stories</button>' +
+      "<span class=\"radar-detail-meta\">" +
+      escapeHtml(meta.icon) +
+      " " +
+      escapeHtml(meta.label) +
+      (score != null ? " · Radar " + Math.round(score) : "") +
+      "</span>" +
+      "</div>" +
+      '<h3 class="radar-detail-title">' +
+      escapeHtml(rec.title || "") +
+      "</h3>" +
+      '<div class="radar-detail-facts">' +
+      (src ? "<span><b>Source:</b> " + escapeHtml(src) + "</span>" : "") +
+      (fullDate ? "<span><b>Published:</b> " + fullDate + "</span>" : "") +
+      (rec.subcategory
+        ? "<span><b>Category:</b> " +
+          escapeHtml(meta.label) +
+          (rec.subcategory ? " · " + escapeHtml(rec.subcategory) : "") +
+          "</span>"
+        : (rec.category ? "<span><b>Category:</b> " + escapeHtml(meta.label) + "</span>" : "")) +
+      (score != null ? "<span><b>Radar Score:</b> " + Math.round(score) + "</span>" : "") +
+      "</div>" +
+      bodyHtml +
+      chipsHtml +
+      sourceHtml +
+      "</div>"
     );
   }
 
@@ -341,8 +494,26 @@
     );
   }
 
+  function openStory(id) {
+    const rec = state.records.find((r) => r.id === id);
+    if (!rec) return;
+    state.detail = rec;
+    renderRoute();
+  }
+
+  function closeDetail() {
+    state.detail = null;
+    renderRoute();
+  }
+
   function entityPageHtml() {
     const ent = state.entity;
+
+    /* If a story detail is open, show it full-width and hide the list. */
+    if (state.detail) {
+      return detailHtml(state.detail);
+    }
+
     const stories = R.entityStories(state.records, ent.group, ent.name);
     const windowed = T && typeof T.windowItems === "function" ? T.windowItems(stories, state.range) : stories;
     const avg = R.avgScore(stories);
@@ -470,7 +641,12 @@
   }
 
   async function show(route) {
-    state.route = route || { kind: "none" };
+    const nextRoute = route || { kind: "none" };
+    const nextKey = nextRoute.kind + "|" + (nextRoute.group || "") + "|" + (nextRoute.slug || "");
+    const routeChanged = nextKey !== state.routeKey;
+    state.route = nextRoute;
+    state.routeKey = nextKey;
+    if (routeChanged) state.detail = null;
     if (!state.active) setView(true);
     if (state.records.length === 0 && !state.loading) {
       await ensureRecords();
@@ -496,17 +672,47 @@
     }
     if (els.body) {
       els.body.addEventListener("click", (e) => {
+        /* Close-detail button. */
+        const closeBtn = e.target.closest("[data-close-detail]");
+        if (closeBtn) {
+          e.preventDefault();
+          closeDetail();
+          return;
+        }
+
+        /* Entity chip — navigate to the entity's radar page. */
         const chip = e.target.closest(".entity-chip");
         if (chip && chip.dataset && chip.dataset.radarGroup && chip.dataset.token) {
           e.preventDefault();
+          if (state.detail) closeDetail();
           location.hash = R.radarUrl(chip.dataset.radarGroup, chip.dataset.token);
           return;
         }
+
+        /* Range facet — filter within the entity page. */
         const range = e.target.closest(".facet-chip[data-range]");
         if (range && range.dataset.range) {
           state.range = range.dataset.range;
-          if (els.body.querySelector("#radar-range")) {
-            renderRoute();
+          renderRoute();
+          return;
+        }
+
+        /* Story card click — open in-app detail, never navigate externally. */
+        const card = e.target.closest(".radar-card[data-story-id]");
+        if (card) {
+          e.preventDefault();
+          openStory(card.dataset.storyId);
+          return;
+        }
+      });
+
+      /* Keyboard support for story cards. */
+      els.body.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          const card = e.target.closest(".radar-card[data-story-id]");
+          if (card) {
+            e.preventDefault();
+            openStory(card.dataset.storyId);
           }
         }
       });
@@ -515,6 +721,6 @@
 
   bindEvents();
 
-  const api = { show, hide, renderRoute, ensureRecords };
+  const api = { show, hide, renderRoute, ensureRecords, openStory, closeDetail };
   root.AIRadarRadarView = api;
 })(typeof window !== "undefined" ? window : this);

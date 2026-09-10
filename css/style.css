@@ -323,16 +323,9 @@ body {
   border-radius: 999px;
 }
 
-.top-img {
-  height: 150px;
-  background-size: cover;
-  background-position: center;
-}
-.top-img.placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 3rem;
+.top-card .card-thumb {
+  border-radius: 0;
+  border-bottom: 1px solid var(--border);
 }
 
 .top-body {
@@ -366,7 +359,6 @@ body {
   border-radius: var(--radius);
   overflow: hidden;
   transition: transform 0.18s ease, border-color 0.18s, box-shadow 0.25s;
-  height: 100%;
 }
 .card:hover {
   transform: translateY(-3px);
@@ -374,17 +366,24 @@ body {
   box-shadow: var(--shadow);
 }
 
-.card-img {
-  height: 150px;
+/* Category accent left-strip (4–6px), used only when no og:image exists
+ * (the card carries `no-thumb`). Category colors mirror the badges. */
+.cat-research { --cat: #b7a4ff; }
+.cat-product  { --cat: #74c9ff; }
+.cat-funding  { --cat: #58e0b6; }
+.cat-policy   { --cat: #ffc65c; }
+.cat-news     { --cat: #aeb9cb; }
+
+.card.no-thumb,
+.top-card.no-thumb {
+  border-left: 4px solid var(--cat, var(--accent));
+}
+
+.card-thumb {
+  height: 96px;
   background-size: cover;
   background-position: center;
   flex-shrink: 0;
-}
-.card-img.placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 2.8rem;
 }
 
 .card-body {
@@ -392,7 +391,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: 9px;
-  flex: 1;
 }
 
 .card-top {
@@ -427,7 +425,10 @@ body {
 .card-desc {
   color: var(--muted);
   font-size: 0.88rem;
-  flex: 1;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .card-meta {

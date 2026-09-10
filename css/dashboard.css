@@ -54,6 +54,55 @@
   font-weight: 800;
 }
 
+/* ---------- Score tooltip (Item 4) ---------- */
+/* CSS-only: shows on hover and keyboard/touch focus (no JS). The bubble is
+ * always paired via aria-describedby; visibility is toggled purely in CSS. */
+.score-tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.score-tip .radar {
+  display: block;
+  border-radius: 50%;
+}
+.score-tip .radar:focus-visible {
+  outline: 2px solid var(--accent, #0ea5e9);
+  outline-offset: 2px;
+}
+.score-tip-bubble {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  width: max-content;
+  max-width: 220px;
+  background: var(--panel-solid, #12192a);
+  color: var(--text, #e7ecf5);
+  border: 1px solid var(--border, rgba(148, 163, 184, 0.14));
+  box-shadow: 0 10px 22px -12px rgba(0, 0, 0, 0.75);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  font-weight: 500;
+  text-align: left;
+  white-space: normal;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0s linear 0.15s;
+}
+.score-tip:hover .score-tip-bubble,
+.score-tip:focus-within .score-tip-bubble {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
 /* ---------- AI summary reveal ---------- */
 .ai-summary {
   border-top: 1px solid var(--border);

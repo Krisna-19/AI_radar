@@ -159,23 +159,6 @@
     return s.length > n ? s.slice(0, n - 1) + "…" : s;
   }
 
-  function placeholderGradient(id) {
-    const colors = [
-      ["#0ea5e9", "#6366f1"],
-      ["#10b981", "#0ea5e9"],
-      ["#f59e0b", "#ef4444"],
-      ["#8b5cf6", "#ec4899"],
-    ];
-    const g = colors[hashCode(id) % colors.length];
-    return g;
-  }
-
-  function hashCode(str) {
-    let h = 0;
-    for (let i = 0; i < str.length; i++) h = (h << 5) - h + str.charCodeAt(i);
-    return Math.abs(h);
-  }
-
   function domainFromLink(url) {
     try {
       return new URL(url).hostname.replace(/^www\./, "");
@@ -269,51 +252,59 @@
       .join("");
   }
 
+  /* Compact og:image thumbnail when the archive already carries an image URL
+   * (via dashboard.cardVisual). Returns "" (no banner) when there is none, so
+   * the card falls back to the category left-strip. Never fetches/scrapes. */
+  function cardThumb(item) {
+    const v = cardVisual(item);
+    if (!v.hasThumb) return "";
+    return (
+      '<div class="card-thumb" role="img" aria-hidden="true" style="background-image:url(\'' +
+      escapeHtml(v.thumbUrl) +
+      '\')"></div>'
+    );
+  }
+
+  /* cardVisual is supplied by the dashboard module when present; fall back to
+   * a local copy so the classic (dash-off) card never breaks. */
+  function cardVisual(item) {
+    if (
+      window.AIRadarDashboard &&
+      typeof window.AIRadarDashboard.cardVisual === "function"
+    ) {
+      return window.AIRadarDashboard.cardVisual(item);
+    }
+    const raw = item && item.image;
+    return {
+      category: item && item.category ? item.category : "news",
+      thumbUrl: typeof raw === "string" && raw.trim() ? raw.trim() : "",
+      hasThumb: Boolean(typeof raw === "string" && raw.trim()),
+    };
+  }
+
   function cardHtml(item) {
     const meta = categoryMeta(item.category);
-    let img = "";
-    if (item.image) {
-      img =
-        '<div class="card-img" style="background-image:url(\'' +
-        escapeHtml(item.image) +
-        '\')"></div>';
-    } else {
-      const g = placeholderGradient(item.id || item.title);
-      img =
-        '<div class="card-img placeholder" style="background:linear-gradient(135deg,' +
-        g[0] +
-        "," +
-        g[1] +
-        ')"><span>' +
-        escapeHtml(meta.icon) +
-        "</span></div>";
-    }
-
-    const initials = (item.sourceName || "??")
-      .split(" ")
-      .map((w) => w[0])
-      .slice(0, 2)
-      .join("")
-      .toUpperCase();
-
+    const v = cardVisual(item);
     const dashHtml =
       window.AIRadarDashboard && typeof window.AIRadarDashboard.cardEnhancement === "function"
         ? window.AIRadarDashboard.cardEnhancement(item)
         : "";
 
     return (
-      '<article class="card dash-enhanced' +
+      '<article class="card dash-enhanced cat-' +
+      escapeHtml(v.category) +
+      (v.hasThumb ? "" : " no-thumb") +
       (window.AIRadarDashboard ? "" : " dash-off") +
       '" data-cat="' +
-      item.category +
+      escapeHtml(v.category) +
       '" data-src="' +
       escapeHtml(item.sourceId) +
       '">' +
-      img +
+      cardThumb(item) +
       '<div class="card-body">' +
       '<div class="card-top">' +
       '<span class="badge badge-' +
-      item.category +
+      escapeHtml(v.category) +
       '">' +
       escapeHtml(meta.icon + " " + meta.label) +
       "</span>" +
@@ -350,25 +341,12 @@
 
   function topStoryHtml(item, i) {
     const meta = categoryMeta(item.category);
-    let thumb = "";
-    if (item.image) {
-      thumb =
-        '<div class="top-img" style="background-image:url(\'' +
-        escapeHtml(item.image) +
-        '\')"></div>';
-    } else {
-      const g = placeholderGradient(item.id || item.title);
-      thumb =
-        '<div class="top-img placeholder" style="background:linear-gradient(135deg,' +
-        g[0] +
-        "," +
-        g[1] +
-        ')"><span>' +
-        escapeHtml(meta.icon) +
-        "</span></div>";
-    }
+    const v = cardVisual(item);
     return (
-      '<a class="top-card" href="' +
+      '<a class="top-card cat-' +
+      escapeHtml(v.category) +
+      (v.hasThumb ? "" : " no-thumb") +
+      '" href="' +
       (item.link && item.link !== "#"
         ? escapeHtml(item.link)
         : "#") +
@@ -376,10 +354,10 @@
       '<span class="rank">' +
       escapeHtml("#" + (i + 1)) +
       "</span>" +
-      thumb +
+      cardThumb(item) +
       '<span class="top-body">' +
       '<span class="badge badge-' +
-      item.category +
+      escapeHtml(v.category) +
       '">' +
       escapeHtml(meta.icon + " " + meta.label) +
       "</span>" +
@@ -467,27 +445,39 @@
     // page; explain it and surface the most recent stories instead.
     const todayFallback =
       state.range === "today" && ranged.length === 0 && base.length > 0;
-    const showItems = todayFallback
+    let showItems = todayFallback
       ? latestItems(base, 48)
       : ranged;
 
     if (state.range === "today") {
-      const top = todayFallback
-        ? []
-        : [...ranged].sort((a, b) => (b.score || 0) - (a.score || 0));
-      renderTopStories(top);
-      if (
+      if (todayFallback) {
+        renderTopStories([]);
+        if (window.AIRadarDashboard && typeof window.AIRadarDashboard.renderTopSignal === "function") {
+          window.AIRadarDashboard.renderTopSignal([]);
+        }
+      } else if (
         window.AIRadarDashboard &&
-        typeof window.AIRadarDashboard.renderTopSignal === "function"
+        typeof window.AIRadarDashboard.partitionHighlights === "function"
       ) {
-        window.AIRadarDashboard.renderTopSignal(top);
+        // Distinct Top Signal + Top Stories + feed: the highlights are pulled
+        // out of today's set and the feed is the residual (no story is shown in
+        // more than one section, and same-identity copies are not repeated).
+        const D = window.AIRadarDashboard;
+        const hl = D.partitionHighlights(ranged);
+        renderTopStories(hl.topStories);
+        D.renderTopSignal(hl.topSignal);
+        showItems = hl.feed;
+      } else {
+        // Dashboard layer absent: fall back to the classic single-section view.
+        const top = [...ranged].sort((a, b) => (b.score || 0) - (a.score || 0));
+        renderTopStories(top);
+        if (window.AIRadarDashboard && typeof window.AIRadarDashboard.renderTopSignal === "function") {
+          window.AIRadarDashboard.renderTopSignal(top);
+        }
       }
     } else {
       els.topStories.innerHTML = "";
-      if (
-        window.AIRadarDashboard &&
-        typeof window.AIRadarDashboard.renderTopSignal === "function"
-      ) {
+      if (window.AIRadarDashboard && typeof window.AIRadarDashboard.renderTopSignal === "function") {
         window.AIRadarDashboard.renderTopSignal([]);
       }
     }
