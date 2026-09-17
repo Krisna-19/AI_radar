@@ -2,7 +2,7 @@
 
 The **Canonical Story** is the single, stable, versioned data model produced by
 `normalizeItem()` in `js/shared.js` and consumed by every later pipeline stage
-(dedupe → classify → summarize → score → store). It replaces the ad-hoc "raw
+(dedupe → cluster → article extraction → classify → score → summarize → store). It replaces the ad-hoc "raw
 items" of Stage 1/2 with one well-defined shape that later stages can rely on.
 
 > **Version:** `schemaVersion: "1.0"` · **Implemented in:** Stage 3
@@ -55,7 +55,7 @@ items" of Stage 1/2 with one well-defined shape that later stages can rely on.
 | `description` | string \| null | `null` |
 | `author` | string \| null | `null` (not parsed yet) |
 | `imageUrl` | string \| null | `null` |
-| `content` | string \| null | `null` (full body, future) |
+| `content` | string \| null | `null` at normalization time; may be populated with extracted article plain text by the optional Stage 5.5 article extraction (see [§2.4](#24-article-content--stage-55-article-extraction)) when `ARTICLE_FETCH` is enabled |
 | `subcategory` | string \| null | Stage 6: one of the 12-class taxonomy (e.g. `model`, `funding`, `safety`) |
 | `tags` | string[] | `[]` (Stage 6: matched entities + topical keywords, ≤6) |
 | `companies` | string[] | `[]` (Stage 6: matched entities) |
@@ -92,6 +92,31 @@ field it mirrors):
 | `description` | (already top-level) |
 | `image` | `imageUrl` |
 | `fingerprint` | (already top-level) |
+
+### 2.4 Article content — Stage 5.5 article extraction
+
+`story.content` is **`null`** when a story is normalized by Stage 1-3 and remains
+so until the optional article-extraction stage (`scripts/pipeline/extract.js`)
+runs. That stage fetches each story's linked article and stores the extracted
+plain text in `content`. Behavior is exactly as implemented:
+
+- **Populated with extracted article plain text** (boilerplate stripped, tags
+  collapsed, whitespace normalized) **only when `ARTICLE_FETCH` is enabled** in
+  the build environment (`build-news.js`). The stage is **OFF by default**.
+- **Stays `null` when extraction is disabled or unset** — the default build
+  behavior is unchanged and `content` is simply never touched.
+- **Stays `null` on any extraction failure or skip**: invalid/unusable URL,
+  obviously non-article host (social/video/media, e.g. YouTube, Twitter/X),
+  HTTP error, timeout, network failure, empty body, non-HTML response, body
+  exceeding the 500KB read cap, unparseable HTML, or extracted text below the
+  **30-word minimum** after boilerplate removal.
+- **Never overwrites existing content**: `extractArticles()` populates
+  `content` only when it is currently null/empty; a story that already has
+  non-empty `content` is left untouched (`skipped`).
+
+The stage position in the build is exactly:
+`clusterStories` → `extractArticles` → `classifyStories` → `scoreStories` →
+`summarizeStories`, so `content` is available to classification and scoring.
 
 ---
 
@@ -208,7 +233,10 @@ the snapshot under `stats.rejectedValidated`.
   Stage 2 code/tests and the browser aggregator keep their call shape.
 - **Pipeline**: `scripts/pipeline/ingest.js` parses feeds and normalizes via
   `normalizeItem`; `scripts/build-news.js` validates every story, logs
-  rejections, dedupes, **classifies (Stage 6: `classify.js` sets `subcategory`,
+  rejections, dedupes and clusters (Stage 4), optionally extracts article text
+  (Stage 5.5: `extract.js` populates `story.content` ONLY when `ARTICLE_FETCH`
+  is enabled; disabled by default and never overwriting existing content),
+  then **classifies (Stage 6: `classify.js` sets `subcategory`,
   entities, `tags` and refines `category` to a legacy top-5 id) and scores
   (Stage 6: `score.js` fills `scores.*` and `radarScore`)**, **summarizes
   (Stage 7: `summarize.js` fills `ai.summary`/`whyItMatters`/`keyTakeaways` +

@@ -509,18 +509,6 @@ body.radar-active .pipeline-view {
   color: var(--muted);
 }
 
-.radar-detail-source-link {
-  display: inline-block;
-  font-size: 0.85rem;
-  color: var(--accent);
-  text-decoration: none;
-  font-weight: 600;
-}
-
-.radar-detail-source-link:hover {
-  text-decoration: underline;
-}
-
 .radar-related {
   display: flex;
   flex-wrap: wrap;

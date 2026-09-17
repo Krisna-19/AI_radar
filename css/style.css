@@ -453,16 +453,6 @@ body {
 .source .dot {
   flex-shrink: 0;
 }
-.link {
-  color: var(--accent);
-  white-space: nowrap;
-}
-
-.card-link {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-}
 
 /* ---------- states ---------- */
 .state-box {

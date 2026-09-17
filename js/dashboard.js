@@ -440,11 +440,11 @@
         '<span class="signal-tag" style="color:' + band.color + '">📡 Top signal · ' +
         escapeHtml(band.label + " " + pct + "%") +
         "</span>" +
-        '<a class="signal-link" href="' +
-        escapeHtml(sig.link && sig.link !== "#" ? sig.link : "#") +
-        '" target="_blank" rel="noopener noreferrer">' +
+        '<span class="signal-link" data-story-id="' +
+        escapeHtml(sig.id || "") +
+        '" tabindex="0" role="button" aria-label="Read story inside AI Radar">' +
         escapeHtml(sig.title || "") +
-        "</a>" +
+        "</span>" +
         "</div>";
     };
 

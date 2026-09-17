@@ -123,6 +123,57 @@ test("extractive: deterministic repeated runs produce identical ai output", asyn
 });
 
 /* ------------------------------------------------------------------ *
+ * Input priority: content (full article) preferred over description
+ * ------------------------------------------------------------------ */
+
+const ARTICLE_BODY =
+  "Nvidian Labs published new findings on sparse attention today. The work " +
+  "reduces memory use in large language models by a wide margin. Early " +
+  "benchmarks show compelling results on long-context tasks. The paper and " +
+  "code are now publicly available online.";
+
+test("input priority: non-empty content wins over a present description", async () => {
+  const s = story("Input priority", { description: BODY });
+  s.content = ARTICLE_BODY;
+  assert.strictEqual(SUM.bodyText(s), ARTICLE_BODY.trim(), "bodyText prefers content over description");
+  await SUM.summarizeStory(s, { mode: "extract" });
+  assert.ok(s.ai.summary, "content-based summary should be populated");
+  // The extractive summary must be drawn from the article content, not the blurb.
+  const src = (s.content + " " + s.title).toLowerCase();
+  for (const w of String(s.ai.summary).toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1)) {
+    assert.ok(src.indexOf(w) !== -1, `'${w}' must come from the article content`);
+  }
+});
+
+test("input priority: content absent -> description wins (previous behavior)", async () => {
+  const s = story("OpenAI releases GPT-5", { description: BODY });
+  s.content = null;
+  assert.strictEqual(SUM.bodyText(s), BODY.trim());
+  await SUM.summarizeStory(s, { mode: "extract" });
+  assert.ok(s.ai.summary, "description still summarizes when content is absent");
+  assertGrounded(s);
+});
+
+test("input priority: empty/null/whitespace-only content falls back to description", async () => {
+  const s = story("OpenAI releases GPT-5", { description: BODY });
+  for (const empty of [null, undefined, "", "   ", "\n\t "]) {
+    s.content = empty;
+    assert.strictEqual(SUM.bodyText(s), BODY.trim(), "fallback for content=" + JSON.stringify(empty));
+  }
+  await SUM.summarizeStory(s, { mode: "extract" });
+  assert.ok(s.ai.summary, "description fallback still summarizes");
+  assertGrounded(s);
+});
+
+test("input priority: whitespace-only content does not shadow description end-to-end", async () => {
+  const s = story("Fallback piece", { description: BODY });
+  s.content = "   \n ";
+  await SUM.summarizeStory(s, { mode: "extract" });
+  assert.ok(s.ai.summary, "whitespace content must not suppress the description-based summary");
+  assertGrounded(s);
+});
+
+/* ------------------------------------------------------------------ *
  * idempotency
  * ------------------------------------------------------------------ */
 

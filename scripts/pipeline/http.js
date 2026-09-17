@@ -65,4 +65,75 @@ async function fetchText(url, opts = {}) {
   }
 }
 
-module.exports = { fetchText, FeedError, DEFAULT_TIMEOUT_MS };
+/**
+ * Fetch a URL and read the response body with a byte-cap.
+ * Enforces maxBytes WHILE reading (chunk-by-chunk), not after full buffering.
+ * Returns { text, contentType, responseMs, status }.
+ * Throws FeedError on timeout, HTTP error, network failure, or empty body.
+ */
+async function fetchBytes(url, opts = {}) {
+  const timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS;
+  const maxBytes =
+    typeof opts.maxBytes === "number" && opts.maxBytes > 0 ? opts.maxBytes : Infinity;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const started = Date.now();
+  let resp;
+  try {
+    resp = await fetch(url, {
+      signal: ctrl.signal,
+      redirect: "follow",
+      headers: Object.assign({}, defaultHeaders(), opts.headers || {}),
+    });
+    if (!resp.ok) throw new FeedError("http", "HTTP " + resp.status);
+
+    const contentType = (resp.headers && resp.headers.get("content-type")) || "";
+    const reader = resp.body.getReader();
+    const chunks = [];
+    let totalBytes = 0;
+    let limitExceeded = false;
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        limitExceeded = true;
+        reader.cancel().catch(() => {});
+        break;
+      }
+      chunks.push(Buffer.from(value));
+    }
+
+    if (limitExceeded) {
+      throw new FeedError(
+        "http",
+        "Response exceeded " + maxBytes + " byte limit"
+      );
+    }
+
+    const buf = Buffer.concat(chunks);
+    const text = buf.toString("utf8");
+    if (!text.trim()) throw new FeedError("empty", "Empty response body");
+    return {
+      text,
+      contentType,
+      responseMs: Date.now() - started,
+      status: resp.status,
+    };
+  } catch (e) {
+    if (e.name === "AbortError") {
+      throw new FeedError("timeout", "Timeout after " + timeoutMs + "ms");
+    }
+    if (e instanceof FeedError) throw e;
+    const cause =
+      (e && e.cause && (e.cause.message || String(e.cause))) ||
+      (e && e.message) ||
+      String(e);
+    throw new FeedError("network", String(cause));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+module.exports = { fetchText, fetchBytes, FeedError, DEFAULT_TIMEOUT_MS };

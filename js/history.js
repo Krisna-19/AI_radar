@@ -74,14 +74,6 @@
     return Math.floor(h / 24) + "d ago";
   }
 
-  function domainFromLink(url) {
-    try {
-      return new URL(url).hostname.replace(/^www\./, "");
-    } catch (e) {
-      return "";
-    }
-  }
-
   function categoryMeta(id) {
     return (CATEGORIES || []).find((c) => c.id === id) || { label: "News", icon: "📰" };
   }
@@ -344,7 +336,9 @@
       escapeHtml(item.category || "news") +
       '" data-src="' +
       escapeHtml(item.source && item.source.id ? item.source.id : "") +
-      '">' +
+      '" data-story-id="' +
+      escapeHtml(item.id || "") +
+      '" tabindex="0" role="button" aria-label="Read story inside AI Radar">' +
       img +
       '<div class="card-body">' +
       '<div class="card-top">' +
@@ -369,17 +363,9 @@
       '"><span class="dot"></span>' +
       escapeHtml((item.source && item.source.name) || item.sourceName || "") +
       "</span>" +
-      '<span class="link">Read · ' +
-      escapeHtml(item.link && item.link !== "#" ? domainFromLink(item.link) : "Source") +
-      " →</span>" +
       "</div>" +
       dashHtml +
       "</div>" +
-      (item.link && item.link !== "#"
-        ? '<a class="card-link" href="' +
-          escapeHtml(item.link) +
-          '" target="_blank" rel="noopener noreferrer" aria-label="Read article"></a>'
-        : "") +
       "</article>"
     );
   }
@@ -468,6 +454,13 @@
     });
   }
 
+  function openStory(id) {
+    const rec = (id && state.records.find((r) => r.id === id)) || null;
+    if (window.AIRadarArticle && typeof window.AIRadarArticle.open === "function") {
+      window.AIRadarArticle.open(rec);
+    }
+  }
+
   function bindEvents() {
     if (els.search) {
       els.search.addEventListener("input", () => {
@@ -546,30 +539,46 @@
     if (els.grid) {
       els.grid.addEventListener("click", (e) => {
         const chip = e.target.closest(".entity-chip");
-        if (!chip || !chip.dataset.token) return;
-        const token = chip.dataset.token;
-        /* Stage 12: prefer the entity's radar page when it resolves exactly
-         * (the archive is always loaded here); else fall back to history
-         * filtering / global search. */
-        const Radar = window.AIRadarRadar;
-        if (Radar && typeof Radar.groupOfToken === "function") {
-          const records = state.records.length
-            ? state.records
-            : (Radar.getIndex && Radar.getIndex()) || [];
-          const group = Radar.groupOfToken(records, token);
-          if (group) {
-            const url = Radar.radarUrl(group, token);
-            if (location.hash !== url) location.hash = url;
-            return;
+        if (chip && chip.dataset.token) {
+          const token = chip.dataset.token;
+          /* Stage 12: prefer the entity's radar page when it resolves exactly
+           * (the archive is always loaded here); else fall back to history
+           * filtering / global search. */
+          const Radar = window.AIRadarRadar;
+          if (Radar && typeof Radar.groupOfToken === "function") {
+            const records = state.records.length
+              ? state.records
+              : (Radar.getIndex && Radar.getIndex()) || [];
+            const group = Radar.groupOfToken(records, token);
+            if (group) {
+              const url = Radar.radarUrl(group, token);
+              if (location.hash !== url) location.hash = url;
+              return;
+            }
           }
+          if (els.company) {
+            els.company.value = token;
+          } else if (window.AIRadarHooks && typeof window.AIRadarHooks.setSearch === "function") {
+            window.AIRadarHooks.setSearch(token);
+          }
+          resetPage();
+          render();
+          return;
         }
-        if (els.company) {
-          els.company.value = token;
-        } else if (window.AIRadarHooks && typeof window.AIRadarHooks.setSearch === "function") {
-          window.AIRadarHooks.setSearch(token);
+        const card = e.target.closest(".card[data-story-id]");
+        if (card) {
+          e.preventDefault();
+          openStory(card.dataset.storyId);
+          return;
         }
-        resetPage();
-        render();
+      });
+      els.grid.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        const card = e.target.closest(".card[data-story-id]");
+        if (card) {
+          e.preventDefault();
+          openStory(card.dataset.storyId);
+        }
       });
     }
   }

@@ -90,14 +90,15 @@ function charCap(text, limit) {
   return cut;
 }
 
-/* The body text a summary may be drawn from: description first, else content.
- * Title is deliberately NOT used as body (a title alone is never a summary). */
+/* The body text a summary may be drawn from: content (the fetched full
+ * article) first, else description (the feed blurb). Title is deliberately
+ * NOT used as body (a title alone is never a summary). */
 function bodyText(story) {
   if (!story) return null;
   const desc = story.description;
   const content = story.content;
-  if (desc && typeof desc === "string" && desc.trim()) return desc.trim();
   if (content && typeof content === "string" && content.trim()) return content.trim();
+  if (desc && typeof desc === "string" && desc.trim()) return desc.trim();
   return null;
 }
 

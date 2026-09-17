@@ -42,6 +42,10 @@ jobs:
           # Optional: enables the LLM summarization path. Without this secret the
           # pipeline falls back to the deterministic extractive summarizer.
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          # Stage 5.5: fetch each story's article and extract plain text into
+          # story.content so classify/score/summarize see the full body. Applied
+          # ONLY to this CI build step; local/default builds stay OFF (0).
+          ARTICLE_FETCH: 1
 
       - name: Commit snapshot
         run: |

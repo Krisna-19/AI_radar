@@ -12,12 +12,13 @@
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='46' fill='%230ea5e9'/%3E%3Ctext x='50' y='66' font-size='52' text-anchor='middle' fill='white'%3Eb%3C/text%3E%3C/svg%3E"
     />
-    <link rel="stylesheet" href="css/style.css" />
-    <link rel="stylesheet" href="css/dashboard.css" />
-    <link rel="stylesheet" href="css/search.css" />
-    <link rel="stylesheet" href="css/trends.css" />
-    <link rel="stylesheet" href="css/pipeline.css" />
-    <link rel="stylesheet" href="css/radar.css" />
+    <link rel="stylesheet" href="css/style.css?v=3" />
+    <link rel="stylesheet" href="css/dashboard.css?v=3" />
+    <link rel="stylesheet" href="css/search.css?v=3" />
+    <link rel="stylesheet" href="css/trends.css?v=3" />
+    <link rel="stylesheet" href="css/pipeline.css?v=3" />
+    <link rel="stylesheet" href="css/radar.css?v=3" />
+    <link rel="stylesheet" href="css/article.css?v=3" />
   </head>
   <body>
     <canvas id="bg"></canvas>
@@ -286,6 +287,10 @@
 
         <div id="radar-empty" class="state-box" style="display: none"></div>
       </section>
+
+      <section id="article-view" class="article-view" style="display: none">
+        <div id="article-body" class="article-holder"></div>
+      </section>
     </main>
 
     <footer class="site-footer">
@@ -293,26 +298,27 @@
         <span class="logo-text">AI <b>RADAR</b></span>
         <p id="footer-status">Aggregating every day from leading AI sources.</p>
         <p class="fine">
-          Headlines link to the original publishers. Content © their
-          respective owners.
+          Stories open inside AI Radar — summaries, analysis and collected
+          article content from leading sources.
         </p>
       </div>
     </footer>
 
-    <script src="js/config.js"></script>
-    <script src="js/shared.js"></script>
-    <script src="js/aggregator.js"></script>
-    <script src="js/app.js"></script>
-    <script src="js/dashboard.js"></script>
-    <script src="js/search.js"></script>
-    <script src="js/history.js"></script>
-    <script src="js/trends.js"></script>
-    <script src="js/trends-view.js"></script>
-    <script src="js/pipeline-ops.js"></script>
-    <script src="js/pipeline-view.js"></script>
-    <script src="js/radar.js"></script>
-    <script src="js/seo.js"></script>
-    <script src="js/radar-view.js"></script>
-    <script src="js/router.js"></script>
+    <script src="js/config.js?v=3"></script>
+    <script src="js/shared.js?v=3"></script>
+    <script src="js/aggregator.js?v=3"></script>
+    <script src="js/app.js?v=3"></script>
+    <script src="js/dashboard.js?v=3"></script>
+    <script src="js/search.js?v=3"></script>
+    <script src="js/history.js?v=3"></script>
+    <script src="js/trends.js?v=3"></script>
+    <script src="js/trends-view.js?v=3"></script>
+    <script src="js/pipeline-ops.js?v=3"></script>
+    <script src="js/pipeline-view.js?v=3"></script>
+    <script src="js/radar.js?v=3"></script>
+    <script src="js/seo.js?v=3"></script>
+    <script src="js/radar-view.js?v=3"></script>
+    <script src="js/article.js?v=3"></script>
+    <script src="js/router.js?v=3"></script>
   </body>
 </html>

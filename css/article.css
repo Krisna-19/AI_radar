@@ -1,0 +1,197 @@
+/* ---------- View exclusivity ---------- */
+body.article-active .toolbar,
+body.article-active .top-stories,
+body.article-active .news {
+  display: none;
+}
+
+body.article-active .radar-view,
+body.article-active .history-view,
+body.article-active .trends-view,
+body.article-active .pipeline-view {
+  display: none !important;
+}
+
+body.history-active .article-view,
+body.trends-active .article-view,
+body.pipeline-active .article-view,
+body.radar-active .article-view {
+  display: none !important;
+}
+
+/* ---------- Card affordances ---------- */
+.card[data-story-id],
+.top-card[data-story-id],
+.signal-link[data-story-id] {
+  cursor: pointer;
+}
+.card[data-story-id]:focus-visible,
+.top-card[data-story-id]:focus-visible,
+.signal-link[data-story-id]:focus-visible {
+  outline: 2px solid var(--accent, #0ea5e9);
+  outline-offset: 2px;
+}
+
+/* ---------- Reader panel ---------- */
+.article-view {
+  margin-top: 14px;
+}
+
+.article-reader {
+  max-width: 760px;
+  margin: 0 auto 20px;
+  padding: 26px 28px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-left: 3px solid #0ea5e9;
+  border-radius: var(--radius);
+}
+
+.article-reader-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 18px;
+}
+
+.article-back {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 7px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.article-back:hover,
+.article-back:focus-visible {
+  color: var(--accent);
+  border-color: var(--accent);
+  outline: none;
+}
+
+.article-reader-meta {
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+/* ---------- Title + facts row ---------- */
+.article-title {
+  margin: 0 0 14px;
+  font-size: 1.7rem;
+  font-weight: 700;
+  line-height: 1.28;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.article-facts {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+  color: var(--muted);
+  padding-bottom: 16px;
+  margin: 0 0 18px;
+  border-bottom: 1px solid var(--border);
+}
+.article-facts b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ---------- AI summary highlight ---------- */
+.article-summary {
+  margin: 0 0 20px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: rgba(14, 165, 233, 0.05);
+}
+.article-section-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+.article-summary .ai-badge {
+  margin-right: 6px;
+}
+.article-summary p {
+  margin: 0;
+  font-size: 0.96rem;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+/* ---------- Body text ---------- */
+.article-body {
+  margin: 0 0 20px;
+}
+.article-text {
+  font-size: 1rem;
+  line-height: 1.75;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.article-text p {
+  margin: 0;
+}
+.article-muted {
+  color: var(--muted);
+}
+
+/* ---------- Entity chips (informational only, non-interactive) ---------- */
+.article-chips {
+  margin: 0;
+}
+.article-chips-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  display: block;
+  margin: 0 0 8px;
+}
+.article-chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.article-chips-row .entity-chip {
+  cursor: default;
+  pointer-events: none;
+  background: rgba(148, 163, 184, 0.12);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 0.76rem;
+  padding: 4px 11px;
+  border-radius: 999px;
+}
+
+/* ---------- Not-found state ---------- */
+.article-not-found {
+  border-left-color: var(--muted, #8b96a9);
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 560px) {
+  .article-reader {
+    padding: 18px 16px;
+  }
+  .article-title {
+    font-size: 1.35rem;
+  }
+  .article-facts {
+    gap: 10px 14px;
+  }
+}

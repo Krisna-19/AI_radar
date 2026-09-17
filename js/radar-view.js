@@ -423,12 +423,6 @@
       .slice(0, 12)
       .map((c) => chipHtml(c[0], c[1]))
       .join("");
-    const sourceLink =
-      rec.link && rec.link !== "#"
-        ? '<a class="radar-detail-source-link" href="' +
-          escapeHtml(rec.link) +
-          '" target="_blank" rel="noopener noreferrer">Read original source →</a>'
-        : "";
     const bodyHtml = body && !redundant
       ? '<div class="radar-detail-story">' +
         '<div class="radar-detail-section-label">Full story</div>' +
@@ -448,7 +442,6 @@
     const sourceHtml =
       '<div class="radar-detail-source">' +
       (src ? '<span class="radar-detail-source-name">Source: ' + escapeHtml(src) + "</span>" : "") +
-      sourceLink +
       "</div>";
     return (
       '<div class="radar-detail" role="dialog" aria-modal="false" aria-label="Story detail">' +

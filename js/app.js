@@ -159,14 +159,6 @@
     return s.length > n ? s.slice(0, n - 1) + "…" : s;
   }
 
-  function domainFromLink(url) {
-    try {
-      return new URL(url).hostname.replace(/^www\./, "");
-    } catch (e) {
-      return "";
-    }
-  }
-
   /* ---------------- Rendering ---------------- */
 
   function renderClock() {
@@ -299,7 +291,9 @@
       escapeHtml(v.category) +
       '" data-src="' +
       escapeHtml(item.sourceId) +
-      '">' +
+      '" data-story-id="' +
+      escapeHtml(item.id || "") +
+      '" tabindex="0" role="button" aria-label="Read story inside AI Radar">' +
       cardThumb(item) +
       '<div class="card-body">' +
       '<div class="card-top">' +
@@ -326,15 +320,9 @@
       '"><span class="dot"></span>' +
       escapeHtml(item.sourceName) +
       "</span>" +
-      '<span class="link">Read · ' +
-      escapeHtml(item.link && item.link !== "#" ? domainFromLink(item.link) : "Sample") +
-      ' →</span>' +
       "</div>" +
       dashHtml +
       "</div>" +
-      (item.link && item.link !== "#"
-        ? "<a class=\"card-link\" href=\"" + escapeHtml(item.link) + "\" target=\"_blank\" rel=\"noopener noreferrer\" aria-label=\"Read article\"></a>"
-        : "") +
       "</article>"
     );
   }
@@ -343,14 +331,12 @@
     const meta = categoryMeta(item.category);
     const v = cardVisual(item);
     return (
-      '<a class="top-card cat-' +
+      '<div class="top-card cat-' +
       escapeHtml(v.category) +
       (v.hasThumb ? "" : " no-thumb") +
-      '" href="' +
-      (item.link && item.link !== "#"
-        ? escapeHtml(item.link)
-        : "#") +
-      '" target="_blank" rel="noopener noreferrer">' +
+      '" data-story-id="' +
+      escapeHtml(item.id || "") +
+      '" tabindex="0" role="button" aria-label="Read story inside AI Radar">' +
       '<span class="rank">' +
       escapeHtml("#" + (i + 1)) +
       "</span>" +
@@ -370,7 +356,7 @@
       timeAgo(item.date) +
       "</span>" +
       "</span>" +
-      "</a>"
+      "</div>"
     );
   }
 
@@ -687,7 +673,7 @@
      * class lets CSS switch which section is shown; the live feed logic itself
      * is never touched. */
     activateView: function (name) {
-      const names = ["history", "trends", "pipeline", "radar"];
+      const names = ["history", "trends", "pipeline", "radar", "article"];
       const active = names.indexOf(name) !== -1 ? name : null;
       for (const v of names) {
         document.body.classList.toggle(v + "-active", v === active);

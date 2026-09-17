@@ -79,7 +79,7 @@ function serveStatic(res, filePath) {
     const ext = path.extname(abs).toLowerCase();
     res.writeHead(200, {
       "Content-Type": MIME[ext] || "application/octet-stream",
-      "Cache-Control": ext === ".html" ? "no-cache" : "public, max-age=300",
+      "Cache-Control": "no-cache",
     });
     fs.createReadStream(abs).pipe(res);
   });

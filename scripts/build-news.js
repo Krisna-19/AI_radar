@@ -21,6 +21,7 @@ const { clusterStories } = require("./pipeline/dedupe.js");
 const { classifyStories } = require("./pipeline/classify.js");
 const { scoreStories } = require("./pipeline/score.js");
 const { summarizeStories } = require("./pipeline/summarize.js");
+const { extractArticles } = require("./pipeline/extract.js");
 const { loadEnv } = require("./pipeline/env.js");
 const Store = require("./pipeline/store.js");
 
@@ -29,6 +30,13 @@ const CONCURRENCY = 4;
 
 async function main() {
   loadEnv();
+
+  // Stage 5.5 article extraction is OPT-IN and OFF by default. It runs only
+  // when ARTICLE_FETCH is truthy (1/true/yes/on); unset, empty, or an explicit
+  // 0/false/no/off preserves the previous pipeline behavior exactly.
+  const articleFetchEnabled =
+    !!process.env.ARTICLE_FETCH &&
+    !/^(0|false|no|off)$/i.test(String(process.env.ARTICLE_FETCH).trim());
 
   if (!SRC.configValid) {
     SRC.validationErrors.forEach((e) =>
@@ -81,6 +89,18 @@ async function main() {
   const deduped = Core.dedupe(valid);
   const stage4 = clusterStories(deduped);
   const items = stage4.items;
+
+  // Stage 5.5 (gated): full-article text extraction. Runs AFTER Stage 4
+  // clustering and BEFORE classification/scoring so both stages can read
+  // story.content. Adds/updates ONLY story.content, and only when a story
+  // currently has none; extraction failures leave stories unchanged.
+  if (articleFetchEnabled) {
+    const extracted = await extractArticles(items);
+    console.log(
+      `[INFO] article extraction (fetched ${extracted.stats.fetched}, cached ${extracted.stats.cached}, ` +
+        `extracted ${extracted.stats.extracted}, failed ${extracted.stats.failed}, skipped ${extracted.stats.skipped})`
+    );
+  }
 
   // Stage 6: transparent classification (12-category subcategory + entities +
   // tags, mapped onto the legacy top-5 chip) and the explainable Radar Score
