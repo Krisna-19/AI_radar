@@ -30,6 +30,7 @@ item is normalized into the canonical Story model (see [SCHEMA.md](SCHEMA.md)).
   "url": "https://example.com/rss.xml",
   "category": "company",
   "enabled": true,
+  "articleFetch": false,
   "priority": 140,
   "fetchIntervalHours": 3,
   "parser": "auto",
@@ -64,6 +65,7 @@ from the pipeline and the UI filter but stays in the config.
 | `url`              | yes      | string           | `http(s)://` feed URL                    | The RSS/Atom endpoint |
 | `category`         | yes      | string           | `company` \| `research` \| `media`       | Source type (not to be confused with story categories) |
 | `enabled`          | no       | boolean          | default `true`                           | Include in pipeline + UI |
+| `articleFetch`     | no       | boolean          | default `false`                          | Whether Stage 5.5 full-article extraction fetches this source's stories when `ARTICLE_FETCH` is on (per-source gating; see SCHEMA.md §2.4) |
 | `priority`         | no       | number (int)     | default `100`, `>= 0`                    | Sort order (lower = listed/fetched first) |
 | `fetchIntervalHours` | no     | number           | default `3`, `>= 0.5`                    | How often CI refreshes (documentation; the schedule is the workflow cron) |
 | `parser`           | no       | string           | `rss` \| `atom` \| `auto` (default `auto`) | Hints; the parser auto-detects RSS 1.0/2.0, RDF and Atom either way |
@@ -94,6 +96,12 @@ the config is valid (`configValid === true`).
 | 110 | `wired` | WIRED AI | media | `https://www.wired.com/feed/tag/ai/latest/rss` | auto |
 | 120 | `techcrunch` | TechCrunch AI | media | `https://techcrunch.com/category/artificial-intelligence/feed/` | auto |
 | 130 | `googlenews` | Google News AI | media | `https://news.google.com/rss/search?q=artificial+intelligence&hl=en-US&gl=US&ceid=US:en` | auto |
+
+Stage 5.5 article extraction (`ARTICLE_FETCH=1` in CI) currently fetches only
+the sources flagged `"articleFetch": true`: `deepmind`, `huggingface`,
+`googleresearch`, `mit`, `verge` and `techcrunch`. Everything else (including
+`nature`, whose JS-gated pages still need more reliability verification) is
+held at `false` until explicitly enabled.
 
 Two feeds evaluated during Stage 2 (Anthropic, MarkTechPost) were rejected because
 they publish no parseable RSS.

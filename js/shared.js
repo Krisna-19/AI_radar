@@ -430,6 +430,7 @@
   const SOURCE_PARSERS = ["rss", "atom", "auto"];
   const DEFAULT_SOURCE_SETTINGS = {
     enabled: true,
+    articleFetch: false,
     priority: 100,
     fetchIntervalHours: 3,
     parser: "auto",
@@ -463,6 +464,9 @@
     }
     if (source.enabled != null && typeof source.enabled !== "boolean") {
       errors.push({ field: "enabled", message: "must be a boolean" });
+    }
+    if (source.articleFetch != null && typeof source.articleFetch !== "boolean") {
+      errors.push({ field: "articleFetch", message: "must be a boolean" });
     }
     if (
       source.priority != null &&
@@ -507,6 +511,7 @@
   function applySourceDefaults(source) {
     return Object.assign({}, DEFAULT_SOURCE_SETTINGS, source, {
       enabled: source.enabled !== false,
+      articleFetch: source.articleFetch === true,
       color: source.color || DEFAULT_SOURCE_SETTINGS.color,
     });
   }
@@ -590,6 +595,17 @@
     return Array.isArray(value) ? value : [];
   }
 
+  /* Lowest common denominator hostname ('www.' stripped) for wrapper checks. */
+  function urlHost(url) {
+    try {
+      return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+    } catch (e) {
+      return "";
+    }
+  }
+
+  const NEWS_WRAPPER_HOST = "news.google.com";
+
   /* Build a canonical Story from raw parser output + a validated source config. */
   function normalizeItem(rawItem, source, opts) {
     opts = opts || {};
@@ -608,6 +624,13 @@
     const description = normalizeText(raw.description);
     const originalUrl = normalizeText(raw.link) || "";
     const canonicalUrl = canonicalizeUrl(originalUrl) || originalUrl;
+    let publisherUrl = null;
+    if (raw.describedHref && urlHost(canonicalUrl) === NEWS_WRAPPER_HOST) {
+      const pub = canonicalizeUrl(raw.describedHref);
+      if (pub && urlHost(pub) && urlHost(pub) !== NEWS_WRAPPER_HOST && canonicalUrlKey(pub) !== canonicalUrlKey(canonicalUrl)) {
+        publisherUrl = pub;
+      }
+    }
     const published = normalizeTimestamp(raw.pubDate);
     const discoveredAt = new Date(nowMs).toISOString();
 
@@ -624,6 +647,7 @@
       description,
       originalUrl,
       canonicalUrl,
+      publisherUrl,
 
       source: {
         id: source.id,
@@ -726,6 +750,9 @@
     }
     if (s.canonicalUrl && !/^https?:\/\//i.test(s.canonicalUrl)) {
       errors.push({ field: "canonicalUrl", message: "must be an http(s) URL" });
+    }
+    if (s.publisherUrl != null && s.publisherUrl !== "" && !/^https?:\/\//i.test(s.publisherUrl)) {
+      errors.push({ field: "publisherUrl", message: "must be an http(s) URL" });
     }
     if (!s.source || typeof s.source !== "object") {
       errors.push({ field: "source", message: "required source object" });

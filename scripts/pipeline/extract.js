@@ -15,6 +15,15 @@
  *   - FAIL-SAFE: never throws into the pipeline; every failure returns null.
  *   - SKIPS BEFORE NETWORK: obvious non-article hosts/paths (YouTube, Twitter/X,
  *     social media, media binaries) are filtered before any request.
+ *   - SOURCE GATING: extractArticles() accepts an allowedSourceIds allowlist;
+ *     stories whose source.id is not allowlisted are NEVER extracted (no fetch,
+ *     content stays null, counted in stats.disabled). With no allowlist passed,
+ *     every source is allowed (backward-compatible standalone behavior).
+ *   - PER-HOST CONCURRENCY: at most DEFAULT_HOST_CONCURRENCY (2) simultaneous
+ *     fetches per article host, layered UNDER the global pool bound.
+ *   - 429 RETRY: HTTP 429 responses are retried with exponential backoff
+ *     (500ms -> 1s -> 2s) for up to DEFAULT_MAX_RETRIES (3) retries
+ *     (4 total HTTP requests); any other failure returns immediately.
  *   - BYTE/HTML BOUNDS: default 12s timeout and 500KB read cap via
  *     http.fetchBytes() (step-1 approved); only HTML/plain-text bodies accepted.
  *   - BOILERPLATE STRIPPING: structural tags (script/style/nav/header/footer/
@@ -33,12 +42,22 @@
 
 "use strict";
 
-const { fetchBytes } = require("./http.js");
+const { fetchBytes, FeedError } = require("./http.js");
 
 const DEFAULT_TIMEOUT_MS = 12000;
 const DEFAULT_MAX_BYTES = 500 * 1024;
 const DEFAULT_CONCURRENCY = 4;
+/* Keep the global extraction pool at 4 (never higher). */
+const DEFAULT_HOST_CONCURRENCY = 2;
+/* HTTP 429 retry policy: exponential backoff 500ms -> 1s -> 2s, with at most
+ * 3 retries (so a single article URL can be fetched up to 4 times). */
+const DEFAULT_MAX_RETRIES = 3;
+const RETRY_BACKOFF_MS = [500, 1000, 2000];
 const MIN_WORDS = 30;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 /* ------------------------------------------------------------------ *
  * Pre-network URL filtering (obvious non-articles)
@@ -382,7 +401,23 @@ function canonicalCacheKey(url) {
 
 /* Fetch + extract a single article URL. Returns plain text or null. NEVER
  * throws: every failure path (bad URL, skip, timeout, http, network, empty,
- * non-HTML, unparseable, under the 30-word minimum) degrades to null. */
+ * non-HTML, unparseable, under the 30-word minimum) degrades to null.
+ *
+ * HTTP 429 is retried with exponential backoff (default 500ms -> 1s -> 2s)
+ * for up to DEFAULT_MAX_RETRIES retries; after the last retry a 429 is treated
+ * like any other failure (null). All other failures return immediately.
+ *
+ * opts:
+ *   fetchImpl, timeoutMs, maxBytes         (as before)
+ *   maxRetries      number of 429 retries (default 3)
+ *   retryBackoffMs  per-retry delays       (default [500, 1000, 2000])
+ *   diag            optional collector { requests, byStatus, byType, retries }
+ *                   incremented for diagnostics/reporting (never affects the
+ *                   returned value). Events: one `requests` per HTTP attempt,
+ *                   `byStatus[code]` per HTTP status seen (2xx + http errors),
+ *                   `byType[type]` for timeout/network/empty failures, and one
+ *                   `retries` per 429 backoff wait performed.
+ */
 async function extractArticle(url, opts = {}) {
   if (!url || typeof url !== "string") return null;
   const trimmed = url.trim();
@@ -400,67 +435,133 @@ async function extractArticle(url, opts = {}) {
   const fetchImpl = opts.fetchImpl || fetchBytes;
   const timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS;
   const maxBytes = opts.maxBytes || DEFAULT_MAX_BYTES;
+  const backoff = Array.isArray(opts.retryBackoffMs) ? opts.retryBackoffMs : RETRY_BACKOFF_MS;
+  const maxRetries =
+    Number.isInteger(opts.maxRetries) && opts.maxRetries >= 0
+      ? opts.maxRetries
+      : DEFAULT_MAX_RETRIES;
+  const diag = opts.diag;
 
-  let resp;
-  try {
-    resp = await fetchImpl(trimmed, { timeoutMs, maxBytes });
-  } catch (e) {
-    return null; // timeout / http / network / empty / too large -> null
-  }
-  if (!resp || typeof resp.text !== "string" || !resp.text.trim()) return null;
-  if (!acceptsContentType(resp.contentType)) return null;
-
-  try {
-    const cleaned = cleanHtml(resp.text);
-
-    /* 1. <article> (primary) */
-    let text = null;
-    const art = bestRegion(cleaned, "article");
-    if (art) text = textFrom(art.text);
-
-    /* 2. <main> */
-    if (!text || wordCount(text) < MIN_WORDS) {
-      const main = bestRegion(cleaned, "main");
-      if (main) {
-        const t = textFrom(main.text);
-        if (t && wordCount(t) >= MIN_WORDS) text = t;
+  /* Attempt 0 is the first request; each 429 extends us one retry. */
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (diag) {
+      diag.requests = (diag.requests || 0) + 1;
+    }
+    let resp;
+    try {
+      resp = await fetchImpl(trimmed, { timeoutMs, maxBytes });
+    } catch (e) {
+      const status = e && e.status;
+      if (diag) {
+        if (status != null) {
+          diag.byStatus[status] = (diag.byStatus[status] || 0) + 1;
+        } else {
+          const type = (e && e.type) || "network";
+          diag.byType[type] = (diag.byType[type] || 0) + 1;
+        }
       }
+      if (status === 429 && attempt < maxRetries) {
+        const delay = backoff[Math.min(attempt, backoff.length - 1)];
+        if (diag) diag.retries = (diag.retries || 0) + 1;
+        await sleep(delay > 0 ? delay : RETRY_BACKOFF_MS[0]);
+        continue;
+      }
+      return null; // non-429 failure, or the last 429 attempt -> give up
+    }
+    if (!resp || typeof resp.text !== "string" || !resp.text.trim()) return null;
+    if (!acceptsContentType(resp.contentType)) return null;
+    if (diag) {
+      diag.byStatus[resp.status || 200] = (diag.byStatus[resp.status || 200] || 0) + 1;
     }
 
-    /* 3. paragraph cluster */
-    if (!text || wordCount(text) < MIN_WORDS) {
-      const cluster = paragraphClusterText(cleaned);
-      if (cluster && wordCount(cluster) >= MIN_WORDS) text = cluster;
-    }
+    try {
+      const cleaned = cleanHtml(resp.text);
 
-    if (!text || wordCount(text) < MIN_WORDS) return null;
-    return text;
-  } catch (e) {
-    return null; // parse/extraction failure never breaks the pipeline
+      /* 1. <article> (primary) */
+      let text = null;
+      const art = bestRegion(cleaned, "article");
+      if (art) text = textFrom(art.text);
+
+      /* 2. <main> */
+      if (!text || wordCount(text) < MIN_WORDS) {
+        const main = bestRegion(cleaned, "main");
+        if (main) {
+          const t = textFrom(main.text);
+          if (t && wordCount(t) >= MIN_WORDS) text = t;
+        }
+      }
+
+      /* 3. paragraph cluster */
+      if (!text || wordCount(text) < MIN_WORDS) {
+        const cluster = paragraphClusterText(cleaned);
+        if (cluster && wordCount(cluster) >= MIN_WORDS) text = cluster;
+      }
+
+      if (!text || wordCount(text) < MIN_WORDS) return null;
+      return text;
+    } catch (e) {
+      return null; // parse/extraction failure never breaks the pipeline
+    }
   }
+  return null;
 }
 
 /* ------------------------------------------------------------------ *
- * Batch extraction (concurrency + per-run dedup cache)
+ * Batch extraction (per-source gating + per-host pool + run cache)
  * ------------------------------------------------------------------ */
+
+/* Smallest article host for the per-host concurrency gate (www normalized,
+ * lowercased; "" for unparseable URLs - treated as its own gate bucket). */
+function hostOf(url) {
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+  } catch (e) {
+    return "";
+  }
+}
 
 /* Process an array of canonical Stories. Fetches a given URL only once per
  * call (Map keyed by canonicalCacheKey). Populates story.content ONLY when
  * currently null/empty; an existing non-empty content is never overwritten;
- * a failure leaves content unchanged/null. Returns { items, stats }. */
+ * a failure leaves content unchanged/null.
+ *
+ * opts:
+ *   allowedSourceIds  allowlist of source ids eligible for article fetching.
+ *                     stories whose story.source.id is NOT in it are skipped
+ *                     without a fetch (stats.disabled) and keep content null.
+ *                     null/undefined = allow every source (standalone default).
+ *   concurrency       global pool upper bound (default 4 - never raised).
+ *   hostConcurrency   per-host pool bound (default 2).
+ *   maxRetries        HTTP 429 retries (default 3, see extractArticle()).
+ *   retryBackoffMs    per-retry delays (default [500, 1000, 2000]).
+ *   fetchImpl etc.    forwarded to extractArticle().
+ *
+ * Returns { items, stats } where stats adds, beyond the legacy counters:
+ *   disabled, requests, retries, byStatus, byType, wordsTotal, avgWords,
+ *   perSource { [sourceId]: { total, extracted, failed, skipped, disabled,
+ *   fetched, cached, requests, retries, words, byStatus, byType } }.
+ */
 async function extractArticles(stories, opts = {}) {
   const input = Array.isArray(stories) ? stories : [];
   const concurrency = Math.max(1, opts.concurrency || DEFAULT_CONCURRENCY);
+  const hostConcurrency = Math.max(1, opts.hostConcurrency || DEFAULT_HOST_CONCURRENCY);
+  const allowed = opts.allowedSourceIds != null ? new Set(opts.allowedSourceIds) : null;
   const cache = new Map(); // canonicalCacheKey -> string | null (this run only)
   const inflight = new Map(); // canonicalCacheKey -> Promise<string|null>
   /* Shared resolver: any number of stories with the same key await the SAME
-   * fetch (used result is cached once and reused; cached null = failed once). */
-  const resolve = (key, url) => {
-    if (cache.has(key)) stats.cached++;
-    else if (inflight.has(key)) stats.cached++;
-    else {
+   * fetch (used result is cached once and reused; cached null = failed once).
+   * rec is the per-source diagnostics record the triggering story belongs to. */
+  const resolve = (key, url, rec) => {
+    if (cache.has(key)) {
+      stats.cached++;
+      if (rec) rec.cached++;
+    } else if (inflight.has(key)) {
+      stats.cached++;
+      if (rec) rec.cached++;
+    } else {
       stats.fetched++;
-      const p = extractArticle(url, opts)
+      if (rec) rec.fetched++;
+      const p = extractArticle(url, Object.assign({}, opts, { diag: rec }))
         .then((result) => {
           cache.set(key, result);
           inflight.delete(key);
@@ -477,11 +578,56 @@ async function extractArticles(stories, opts = {}) {
     return inflight.has(key) ? inflight.get(key) : Promise.resolve(cache.get(key));
   };
 
+  /* Per-host semaphore: at most `hostConcurrency` fetches in flight for the
+   * same host across all workers. Slots hand off directly to waiters so a
+   * released slot never needs a second bookkeeping pass. */
+  const hostSlots = new Map(); // host -> free slots
+  const hostWaiters = new Map(); // host -> array of resolvers
+  const acquireHost = async (host) => {
+    if (!hostSlots.has(host)) hostSlots.set(host, hostConcurrency);
+    const free = hostSlots.get(host);
+    if (free > 0) {
+      hostSlots.set(host, free - 1);
+      return;
+    }
+    await new Promise((resolve) => {
+      const q = hostWaiters.get(host) || [];
+      q.push(resolve);
+      hostWaiters.set(host, q);
+    });
+  };
+  const releaseHost = (host) => {
+    const q = hostWaiters.get(host);
+    if (q && q.length > 0) q.shift()();
+    else hostSlots.set(host, (hostSlots.get(host) || 0) + 1);
+  };
+
+  const perSource = new Map(); // sourceId -> diagnostics/stats record
+  const ps = (id) => {
+    if (!perSource.has(id)) {
+      perSource.set(id, {
+        total: 0,
+        extracted: 0,
+        failed: 0,
+        skipped: 0,
+        disabled: 0,
+        fetched: 0,
+        cached: 0,
+        requests: 0,
+        retries: 0,
+        words: 0,
+        byStatus: {},
+        byType: {},
+      });
+    }
+    return perSource.get(id);
+  };
+
   const tasks = input.map((story) => {
     const existing = story && typeof story.content === "string" ? story.content.trim() : "";
     const url =
       story && typeof story === "object"
-        ? story.canonicalUrl || story.originalUrl || story.link || null
+        ? story.publisherUrl || story.canonicalUrl || story.originalUrl || story.link || null
         : null;
     return {
       story,
@@ -499,7 +645,15 @@ async function extractArticles(stories, opts = {}) {
     extracted: 0,
     failed: 0,
     skipped: 0,
+    disabled: 0,
+    requests: 0,
+    retries: 0,
+    wordsTotal: 0,
+    avgWords: 0,
+    byStatus: {},
+    byType: {},
     concurrency,
+    hostConcurrency,
   };
 
   let cursor = 0;
@@ -508,31 +662,69 @@ async function extractArticles(stories, opts = {}) {
     async () => {
       while (cursor < tasks.length) {
         const t = tasks[cursor++];
+        const srcId = t.story && t.story.source && t.story.source.id;
+        const rec = srcId ? ps(srcId) : null;
         if (t.skip) {
           stats.skipped++;
+          if (rec) rec.skipped++;
           continue; // never overwrite an existing non-empty story.content
         }
         if (!t.url || !t.story) continue; // no usable URL -> leave unchanged
+        if (allowed && !allowed.has(srcId)) {
+          stats.disabled++;
+          if (rec) rec.disabled++;
+          continue; // source not eligible for article fetching -> never fetch
+        }
 
         stats.attempted++;
-        let result;
-        if (t.key != null) {
-          result = await resolve(t.key, t.url);
-        } else {
-          result = await extractArticle(t.url, opts);
-          stats.fetched++;
-        }
-        if (result) {
-          stats.extracted++;
-          t.story.content = result;
-        } else {
-          stats.failed++;
-          /* leave story.content unchanged/null */
+        if (rec) rec.total++;
+        const host = hostOf(t.url);
+        await acquireHost(host);
+        try {
+          let result;
+          if (t.key != null) {
+            result = await resolve(t.key, t.url, rec);
+          } else {
+            stats.fetched++;
+            if (rec) rec.fetched++;
+            result = await extractArticle(t.url, Object.assign({}, opts, { diag: rec }));
+          }
+          if (result) {
+            stats.extracted++;
+            stats.wordsTotal += wordCount(result);
+            if (rec) {
+              rec.extracted++;
+              rec.words += wordCount(result);
+            }
+            t.story.content = result;
+          } else {
+            stats.failed++;
+            if (rec) rec.failed++;
+            /* leave story.content unchanged/null */
+          }
+        } finally {
+          releaseHost(host);
         }
       }
     }
   );
   await Promise.all(workers);
+
+  /* Fold per-source diagnostics into the aggregate + perSource map. */
+  const perSourceObj = {};
+  for (const [id, rec] of perSource) {
+    perSourceObj[id] = rec;
+    stats.requests += rec.requests;
+    stats.retries += rec.retries;
+    for (const [s, c] of Object.entries(rec.byStatus)) {
+      stats.byStatus[s] = (stats.byStatus[s] || 0) + c;
+    }
+    for (const [s, c] of Object.entries(rec.byType)) {
+      stats.byType[s] = (stats.byType[s] || 0) + c;
+    }
+  }
+  stats.perSource = perSourceObj;
+  stats.avgWords = stats.extracted ? Math.round(stats.wordsTotal / stats.extracted) : 0;
 
   return { items: input, stats };
 }
@@ -541,6 +733,9 @@ module.exports = {
   DEFAULT_TIMEOUT_MS,
   DEFAULT_MAX_BYTES,
   DEFAULT_CONCURRENCY,
+  DEFAULT_HOST_CONCURRENCY,
+  DEFAULT_MAX_RETRIES,
+  RETRY_BACKOFF_MS,
   MIN_WORDS,
   SKIP_HOSTS,
   BANNED_TAGS,
@@ -558,6 +753,7 @@ module.exports = {
   paragraphClusterText,
   acceptsContentType,
   canonicalCacheKey,
+  hostOf,
   extractArticle,
   extractArticles,
 };

@@ -37,6 +37,12 @@ async function main() {
   const articleFetchEnabled =
     !!process.env.ARTICLE_FETCH &&
     !/^(0|false|no|off)$/i.test(String(process.env.ARTICLE_FETCH).trim());
+  // Per-source gating: even with ARTICLE_FETCH on, ONLY sources flagged
+  // articleFetch:true in sources/sources.json are fetched (see also the config
+  // gate in §4 below). Off-by-default sources are never extracted here.
+  const articleFetchSourceIds = SRC.enabledSources
+    .filter((s) => s.articleFetch)
+    .map((s) => s.id);
 
   if (!SRC.configValid) {
     SRC.validationErrors.forEach((e) =>
@@ -95,11 +101,34 @@ async function main() {
   // story.content. Adds/updates ONLY story.content, and only when a story
   // currently has none; extraction failures leave stories unchanged.
   if (articleFetchEnabled) {
-    const extracted = await extractArticles(items);
+    const extracted = await extractArticles(items, {
+      allowedSourceIds: articleFetchSourceIds,
+      concurrency: CONCURRENCY, // global pool stays 4 (never raised)
+      hostConcurrency: 2, // per-host fetches capped at 2
+      maxRetries: 3, // HTTP 429: retry 500ms -> 1s -> 2s, then give up
+    });
     console.log(
-      `[INFO] article extraction (fetched ${extracted.stats.fetched}, cached ${extracted.stats.cached}, ` +
-        `extracted ${extracted.stats.extracted}, failed ${extracted.stats.failed}, skipped ${extracted.stats.skipped})`
+      `[INFO] article extraction (sources ${articleFetchSourceIds.length}/${SRC.enabledSources.length}): ` +
+        `extracted ${extracted.stats.extracted}, failed ${extracted.stats.failed}, cached ${extracted.stats.cached}, ` +
+        `skipped ${extracted.stats.skipped}, disabled ${extracted.stats.disabled}, ` +
+        `requests ${extracted.stats.requests} (429 retries ${extracted.stats.retries}), ` +
+        `avg ${extracted.stats.avgWords} words (${extracted.stats.wordsTotal} total)`
     );
+    for (const id of articleFetchSourceIds) {
+      const r = (extracted.stats.perSource || {})[id];
+      if (!r) continue;
+      console.log(
+        `[INFO]   ${id}: extracted ${r.extracted}/${r.total}, failed ${r.failed}, cached ${r.cached}, ` +
+          `requests ${r.requests}, avg ${r.extracted ? Math.round(r.words / r.extracted) : 0} words, ` +
+          `byStatus ${JSON.stringify(r.byStatus)}`
+      );
+    }
+    for (const [sourceId, r] of Object.entries(extracted.stats.perSource || {})) {
+      if (articleFetchSourceIds.indexOf(sourceId) !== -1) continue;
+      console.log(
+        `[INFO]   ${sourceId}: disabled (articleFetch=off) — ${r.total} considered, ${r.skipped} skipped`
+      );
+    }
   }
 
   // Stage 6: transparent classification (12-category subcategory + entities +

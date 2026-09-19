@@ -43,6 +43,7 @@ items" of Stage 1/2 with one well-defined shape that later stages can rely on.
 | `title` | string | whitespace-normalized; `"Untitled"` fallback |
 | `originalUrl` | string | as-published link (never modified) |
 | `canonicalUrl` | string | tracking params stripped; `originalUrl` if unparseable |
+| `publisherUrl` | string \| null | `null`; for aggregators like Google News the `<item>` `<link>` is a redirect wrapper — when the feed also embeds the real article URL as the first anchor in `<description>`, that URL (tracking params stripped) is preserved here (`null` otherwise) |
 | `source` | object | `{ id, name, type, reliability, priority, weight, color }` |
 | `publishedAt` | string \| null | UTC ISO-8601, or `null` if no valid source date |
 | `discoveredAt` | string | UTC ISO-8601 (when the pipeline saw it) |
@@ -103,13 +104,23 @@ plain text in `content`. Behavior is exactly as implemented:
 - **Populated with extracted article plain text** (boilerplate stripped, tags
   collapsed, whitespace normalized) **only when `ARTICLE_FETCH` is enabled** in
   the build environment (`build-news.js`). The stage is **OFF by default**.
+- **Gated per source**: even with `ARTICLE_FETCH` on, only sources whose
+  `sources/sources.json` entry has `"articleFetch": true` are ever fetched.
+  Every other source's stories keep `content = null` (counted as `disabled`,
+  never touching the network). `articleFetch` defaults to `false`.
 - **Stays `null` when extraction is disabled or unset** — the default build
   behavior is unchanged and `content` is simply never touched.
-- **Stays `null` on any extraction failure or skip**: invalid/unusable URL,
-  obviously non-article host (social/video/media, e.g. YouTube, Twitter/X),
-  HTTP error, timeout, network failure, empty body, non-HTML response, body
-  exceeding the 500KB read cap, unparseable HTML, or extracted text below the
-  **30-word minimum** after boilerplate removal.
+- **Stays `null` on any extraction failure or skip**: source not in the
+  `articleFetch` allowlist, invalid/unusable URL, obviously non-article host
+  (social/video/media, e.g. YouTube, Twitter/X), HTTP error (after exhausting
+  the 429 retry budget below), timeout, network failure, empty body, non-HTML
+  response, body exceeding the 500KB read cap, unparseable HTML, or extracted
+  text below the **30-word minimum** after boilerplate removal.
+- **HTTP 429 is retried**: `extract.js` retries `429 Too Many Requests` with
+  exponential backoff `500ms → 1s → 2s` for up to **3 retries** (4 total HTTP
+  requests per article URL); any other HTTP/transport failure fails once.
+- **Per-host flow control**: the global extraction pool stays `4`; at most **2**
+  fetches are in flight for the same article host at once.
 - **Never overwrites existing content**: `extractArticles()` populates
   `content` only when it is currently null/empty; a story that already has
   non-empty `content` is left untouched (`skipped`).
@@ -235,7 +246,9 @@ the snapshot under `stats.rejectedValidated`.
   `normalizeItem`; `scripts/build-news.js` validates every story, logs
   rejections, dedupes and clusters (Stage 4), optionally extracts article text
   (Stage 5.5: `extract.js` populates `story.content` ONLY when `ARTICLE_FETCH`
-  is enabled; disabled by default and never overwriting existing content),
+  is enabled AND the source is flagged `articleFetch:true`; disabled by default,
+  per-host concurrency 2, 429 retries 500ms→1s→2s, never overwriting existing
+  content),
   then **classifies (Stage 6: `classify.js` sets `subcategory`,
   entities, `tags` and refines `category` to a legacy top-5 id) and scores
   (Stage 6: `score.js` fills `scores.*` and `radarScore`)**, **summarizes

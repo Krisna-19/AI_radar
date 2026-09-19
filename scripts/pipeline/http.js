@@ -13,10 +13,13 @@
 "use strict";
 
 class FeedError extends Error {
-  constructor(type, message) {
+  constructor(type, message, status) {
     super(message || type);
     this.name = "FeedError";
     this.type = type;
+    /* HTTP status code for type === "http" responses (e.g. 404/403/429/503).
+     * Undefined for timeout/network/empty failures and for byte-cap errors. */
+    this.status = status;
   }
 }
 
@@ -45,7 +48,7 @@ async function fetchText(url, opts = {}) {
       redirect: "follow",
       headers: Object.assign({}, defaultHeaders(), opts.headers || {}),
     });
-    if (!resp.ok) throw new FeedError("http", "HTTP " + resp.status);
+    if (!resp.ok) throw new FeedError("http", "HTTP " + resp.status, resp.status);
     const buf = Buffer.from(await resp.arrayBuffer());
     const text = buf.toString("utf8");
     if (!text.trim()) throw new FeedError("empty", "Empty response body");
@@ -85,7 +88,7 @@ async function fetchBytes(url, opts = {}) {
       redirect: "follow",
       headers: Object.assign({}, defaultHeaders(), opts.headers || {}),
     });
-    if (!resp.ok) throw new FeedError("http", "HTTP " + resp.status);
+    if (!resp.ok) throw new FeedError("http", "HTTP " + resp.status, resp.status);
 
     const contentType = (resp.headers && resp.headers.get("content-type")) || "";
     const reader = resp.body.getReader();
