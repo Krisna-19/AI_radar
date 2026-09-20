@@ -92,13 +92,45 @@ function charCap(text, limit) {
 
 /* The body text a summary may be drawn from: content (the fetched full
  * article) first, else description (the feed blurb). Title is deliberately
- * NOT used as body (a title alone is never a summary). */
+ * NOT used as body (a title alone is never a summary). For aggregator feeds
+ * that only ship a headline wrapper (Google News), the <description> is just
+ * the title echoed back ("Headline" / "Headline Publisher"); with no fetched
+ * content that is NOT body text - otherwise the summarizer would fabricate a
+ * "summary" that only restates the title. */
+function isWrapperStory(story) {
+  const u = story && (story.canonicalUrl || story.originalUrl || story.link || "");
+  try {
+    return new URL(u).hostname.toLowerCase().replace(/^www\./, "") === "news.google.com";
+  } catch (e) {
+    return false;
+  }
+}
+
+function echoTokens(value) {
+  return String(value == null ? "" : value)
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+function isTitleEcho(story) {
+  if (!isWrapperStory(story)) return false;
+  const t = echoTokens(story && story.title);
+  const d = echoTokens(story && story.description);
+  if (!t.length || !d.length) return false;
+  if (d.length > t.length + 8) return false; // headline + a short publisher brand
+  for (let i = 0; i < t.length; i++) if (t[i] !== d[i]) return false;
+  return true;
+}
+
 function bodyText(story) {
   if (!story) return null;
   const desc = story.description;
   const content = story.content;
   if (content && typeof content === "string" && content.trim()) return content.trim();
-  if (desc && typeof desc === "string" && desc.trim()) return desc.trim();
+  if (desc && typeof desc === "string" && desc.trim()) {
+    return isTitleEcho(story) ? null : desc.trim();
+  }
   return null;
 }
 
@@ -276,6 +308,12 @@ async function summarizeStory(story, opts = {}) {
   const cfg = Object.assign({}, DEFAULTS, opts.config || {});
   const mode = resolveMode(opts);
 
+  if (mode === "llm" && !bodyText(story)) {
+    applyExtractive(story, cfg); // no usable body -> nothing to summarize
+    story.ai.method = story.ai.summary != null ? "extractive" : null;
+    return story;
+  }
+
   if (mode === "llm") {
     try {
       const parsed = await callLlm(story, opts, cfg);
@@ -335,6 +373,7 @@ module.exports = {
   splitSentences,
   charCap,
   bodyText,
+  isTitleEcho,
   applyExtractive,
   normalizeLlm,
   isLlmGrounded,
