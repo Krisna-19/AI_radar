@@ -90,9 +90,12 @@
   function lastRunHtml() {
     const r = state.lastRun;
     if (!r) return "";
-    const cards = [["Stored", String(r.stored == null ? "—" : r.stored)]];
+    const cards = [];
+    if (r.archiveDays != null) cards.push(["Archive days", String(r.archiveDays)]);
+    if (r.archiveStories != null) cards.push(["Archive stories", String(r.archiveStories)]);
+    cards.push(["Rows written incl. existing", String(r.stored == null ? "—" : r.stored)]);
     if (r.upserted != null) cards.push(["New", String(r.upserted)]);
-    if (r.storedDays != null) cards.push(["Days", String(r.storedDays)]);
+    if (r.storedDays != null) cards.push(["Bucket-days touched", String(r.storedDays)]);
     if (r.radarMean != null) cards.push(["Radar avg", String(r.radarMean)]);
     if (r.summarized != null) cards.push(["Summarized", String(r.summarized)]);
     return (
@@ -178,7 +181,7 @@
     const list = OPS.runHealthHistory(state.runs, 30);
     if (!list.length) return "";
     return (
-      '<table class="run-table"><thead><tr><th>Build</th><th>Status</th><th>Stored</th><th>Radar avg</th><th>Summarized</th><th>Sources ok-empty-err</th></tr></thead><tbody>' +
+      '<table class="run-table"><thead><tr><th>Build</th><th>Status</th><th>Rows incl. existing</th><th>Radar avg</th><th>Summarized</th><th>Sources ok-empty-err</th></tr></thead><tbody>' +
       list
         .map(
           (r) =>
@@ -229,6 +232,7 @@
       const runs = (prev.runs || []).map((r) => ({ ...r }));
       const sources = Array.isArray(snap.sources) ? snap.sources : [];
       const srcSum = OPS.summarizeSources(sources);
+      const archive = OPS.archiveMetrics(prev);
       return {
         runs,
         sources,
@@ -241,6 +245,8 @@
           radarMean: snap.stats && typeof snap.stats.radarMean === "number" ? snap.stats.radarMean : null,
           summarized:
             snap.stats && typeof snap.stats.summarized === "number" ? snap.stats.summarized : null,
+          archiveDays: archive.days || null,
+          archiveStories: archive.stories || null,
         },
         updatedAt: null,
         mode: "snapshot",
@@ -267,10 +273,16 @@
         continue;
       }
     }
+    const archive = OPS.archiveMetrics(idx);
     return {
       runs,
       sources,
-      lastRun: list[0] || null,
+      lastRun: list[0]
+        ? Object.assign({}, list[0], {
+            archiveDays: archive.days || null,
+            archiveStories: archive.stories || null,
+          })
+        : null,
       updatedAt: idx.updatedAt || null,
       mode: "runs",
     };

@@ -149,11 +149,26 @@ async function main() {
     concurrency: Math.max(1, parseInt(process.env.SUMMARY_CONCURRENCY || "8", 10) || 8),
   });
 
+  // Stage 13: deterministic credential scrubbing at the persistence boundary.
+  // Runs EXACTLY once, right before persistence, so the same clean stories flow
+  // into BOTH the archive (data/db) and the committed snapshot (data/news.json).
+  // Only high-confidence credential-shaped strings (GitHub/HF/OpenAI/AWS) are
+  // replaced with [REDACTED_CREDENTIAL]; surrounding prose is preserved and a
+  // story is never dropped. Idempotent: re-running is a no-op.
+  const scrubStats = Store.scrubStories(items);
+  if (scrubStats.scrubbedStories > 0) {
+    console.log(
+      `[INFO] credential scrub: ${scrubStats.scrubbedStories} story/stories, ${scrubStats.changedFields} field(s) redacted.`
+    );
+  } else {
+    console.log("[INFO] credential scrub: no credential-shaped strings found.");
+  }
+
   // Stage 5: persist the staged (deduplicated + clustered + classified +
-  // scored + summarized) stories into data/db (per-day NDJSON + index + run
-  // log), then enforce the retention window. This is additive - data/news.json
-  // below is written unchanged and remains the live snapshot the current
-  // frontend reads.
+  // scored + summarized + scrubbed) stories into data/db (per-day NDJSON +
+  // index + run log), then enforce the retention window. This is additive -
+  // data/news.json below is written unchanged and remains the live snapshot
+  // the current frontend reads.
   const runStartedAt = new Date(started).toISOString();
   const stored = Store.upsertStories(items);
   const pruned = Store.prune(Store.DEFAULT_DB_DIR, { retentionDays: Store.DEFAULT_RETENTION_DAYS });

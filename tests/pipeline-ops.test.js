@@ -136,3 +136,16 @@ test("pure helpers do not mutate their inputs", () => {
   assert.strictEqual(JSON.stringify(sources), sBefore);
   OPS.summarizeSources(sources);
 });
+
+/* ---------------- 6: archiveMetrics ---------------- */
+
+test("archiveMetrics counts days + stories from the archive index", () => {
+  const idx = {
+    days: { "2026-03-14": { count: 2, stories: ["sa", "sb"] }, "2026-03-15": { count: 1, stories: ["sc"] } },
+    stories: { sa: {}, sb: {}, sc: {} },
+  };
+  assert.deepStrictEqual(OPS.archiveMetrics(idx), { days: 2, stories: 3 });
+  assert.deepStrictEqual(OPS.archiveMetrics({}), { days: 0, stories: 0 });
+  assert.deepStrictEqual(OPS.archiveMetrics(null), { days: 0, stories: 0 });
+  assert.deepStrictEqual(OPS.archiveMetrics({ days: undefined, stories: null }), { days: 0, stories: 0 });
+});

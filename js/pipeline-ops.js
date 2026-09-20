@@ -86,6 +86,18 @@
     return sorted[sorted.length - 1];
   }
 
+  /* True archive size (data/db/index.json): number of archived day buckets
+   * and the number of archived story keys. These are the REAL archive metrics,
+   * independent of the run log's per-run "stored"/"storedDays" counters (which
+   * count rows/buckets touched during a run, incl. rows that already existed). */
+  function archiveMetrics(index) {
+    const idx = index || {};
+    return {
+      days: Object.keys(idx.days || {}).length,
+      stories: Object.keys(idx.stories || {}).length,
+    };
+  }
+
   function runHealthHistory(runs, limit) {
     const list = Array.isArray(runs) ? runs : [];
     const cap = typeof limit === "number" && limit > 0 ? limit : 30;
@@ -106,6 +118,7 @@
     runStatus,
     summarizeRun,
     summarizeSources,
+    archiveMetrics,
     latestRun,
     runHealthHistory,
   };

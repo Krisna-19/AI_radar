@@ -802,6 +802,146 @@ function listRuns(dbDir) {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * Stage 13: deterministic credential-string scrubbing
+ * ------------------------------------------------------------------ *
+ * Awarded at the persistence boundary so the SAME clean stories flow into
+ * BOTH the archive (upsertStories) and the committed snapshot (data/news.json).
+ *
+ * Only high-confidence credential-shaped strings are replaced, each one with
+ * the deterministic placeholder [REDACTED_CREDENTIAL]. Patterns are deliberately
+ * narrow (well-known prefix + the exact structure a real token has), so ordinary
+ * prose containing "hf", "sk", "AKIA", "github_pat" etc. is never touched.
+ * The scrubber is deterministic and idempotent: applying it twice yields the
+ * same result, and a placeholder is never re-scrubbed.
+ */
+
+const CREDENTIAL_PLACEHOLDER = "[REDACTED_CREDENTIAL]";
+
+/* Order is author-matter only (reporting); each regex is a standalone,
+ * anchored-to-word-boundary match. */
+const CREDENTIAL_PATTERNS = [
+  // GitHub classic PAT / fine-grained PAT families.
+  { name: "github-classic-pat", test: /\bgh[opsu]_[0-9A-Za-z]{36}\b/ },
+  { name: "github-fine-grained-pat", test: /\bgithub_pat_[0-9A-Za-z_]{70,}\b/ },
+  // Hugging Face user / access tokens (hf_ + 24+ alnum).
+  { name: "huggingface-token", test: /\bhf_[0-9A-Za-z]{24,}\b/ },
+  // OpenAI-style API keys (sk- / sk-proj- + 20+ alnum).
+  { name: "openai-key", test: /\bsk-(?:proj-)?[0-9A-Za-z]{20,}\b/ },
+  // AWS access-key ID shape: AKIA/ASIA + exactly 16 uppercase alnum.
+  { name: "aws-access-key-id", test: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/ },
+];
+
+function buildPatternRe(pat) {
+  return new RegExp(pat.test.source, "g");
+}
+
+/* Replace every high-confidence credential-shaped string in `text`.
+ * Non-string / falsy input is returned untouched. Idempotent. */
+function scrubText(text) {
+  if (typeof text !== "string" || !text) return text;
+  let out = text;
+  for (const pat of CREDENTIAL_PATTERNS) {
+    const re = buildPatternRe(pat);
+    if (re.test(out)) out = out.replace(re, CREDENTIAL_PLACEHOLDER);
+  }
+  return out;
+}
+
+/* Every free-text field that gets persisted (top-level + Stage 7 ai{}).
+ * keyTakeaways is a string[]. */
+const SCRUB_FIELDS = [
+  ["title"],
+  ["description"],
+  ["author"],
+  ["content"],
+  ["ai", "summary"],
+  ["ai", "whyItMatters"],
+  ["ai", "keyTakeaways"],
+];
+
+function getField(story, keys) {
+  let v = story;
+  for (const k of keys) {
+    if (v == null) return undefined;
+    v = v[k];
+  }
+  return v;
+}
+
+function setField(story, keys, value) {
+  let v = story;
+  for (const k of keys.slice(0, -1)) {
+    if (v == null) return;
+    if (v[k] == null) v[k] = {};
+    v = v[k];
+  }
+  const last = keys[keys.length - 1];
+  if (v != null && typeof v === "object") v[last] = value;
+}
+
+/* Scrub one canonical Story in place. Returns the number of fields changed.
+ * A story with no credential-shaped text is untouched (returns 0). */
+function scrubStory(story) {
+  if (!story || typeof story !== "object") return 0;
+  let changed = 0;
+  for (const keys of SCRUB_FIELDS) {
+    const value = getField(story, keys);
+    if (value == null) continue;
+    if (Array.isArray(value)) {
+      let mutated = false;
+      const next = value.map((s) => {
+        if (typeof s !== "string") return s;
+        const t = scrubText(s);
+        if (t !== s) mutated = true;
+        return t;
+      });
+      if (!mutated) continue;
+      setField(story, keys, next);
+      changed++;
+      continue;
+    }
+    if (typeof value !== "string") continue;
+    const next = scrubText(value);
+    if (next === value) continue;
+    setField(story, keys, next);
+    changed++;
+  }
+  return changed;
+}
+
+/* Scrub every story in a staged payload, in place. Returns
+ * { scrubbedStories, changedFields } aggregates for reporting. */
+function scrubStories(stories) {
+  const agg = { scrubbedStories: 0, changedFields: 0 };
+  if (!Array.isArray(stories)) return agg;
+  for (const s of stories) {
+    if (!s) continue;
+    const n = scrubStory(s);
+    if (n > 0) {
+      agg.scrubbedStories++;
+      agg.changedFields += n;
+    }
+  }
+  return agg;
+}
+
+/* Locate every credential-shaped string in `text` for diagnostics / the
+ * pre-commit scan. Returns [{ pattern, value, index }] sorted by index. */
+function findCredentialMatches(text) {
+  const found = [];
+  if (typeof text !== "string" || !text) return found;
+  for (const pat of CREDENTIAL_PATTERNS) {
+    const re = buildPatternRe(pat);
+    let m;
+    while ((m = re.exec(text))) {
+      found.push({ pattern: pat.name, value: m[0], index: m.index });
+    }
+  }
+  found.sort((a, b) => a.index - b.index);
+  return found;
+}
+
 module.exports = {
   DEFAULT_DB_DIR,
   DEFAULT_RETENTION_DAYS,
@@ -830,6 +970,12 @@ module.exports = {
   runLog,
   stats,
   listRuns,
+  CREDENTIAL_PLACEHOLDER,
+  CREDENTIAL_PATTERNS,
+  scrubText,
+  scrubStory,
+  scrubStories,
+  findCredentialMatches,
 };
 
 /* For local diagnostic dry-run of the store on a temp dir. */

@@ -50,6 +50,11 @@ jobs:
           # Local/default builds stay OFF (0); CI keeps it ON for the 6.
           ARTICLE_FETCH: 1
 
+      - name: Scan staged snapshot for credential-shaped strings
+        run: |
+          git add data/news.json data/db
+          node scripts/pipeline/check-secrets.js
+
       - name: Commit snapshot
         run: |
           git config user.name "github-actions[bot]"
